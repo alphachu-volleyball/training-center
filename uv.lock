@@ -1352,8 +1352,8 @@ wheels = [
 
 [[package]]
 name = "pika-zoo"
-version = "1.1.0"
-source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.1.0#7a12ecc31afeaa004ec17a25e5a2defc8c715b10" }
+version = "1.2.0"
+source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.2.0#1c009e7d6b9965f3c3bc356171060a2d0bb27a89" }
 dependencies = [
     { name = "gymnasium" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1981,7 +1981,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.1.0" },
+    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "stable-baselines3", specifier = ">=2.4.0" },
