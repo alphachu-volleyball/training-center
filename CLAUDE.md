@@ -25,6 +25,47 @@ alphachu-volleyball/
 
 This repo is NOT consumed as a library by other repos. Its output is model artifacts, not code.
 
+### Package Structure
+
+```
+src/training_center/
+├── env_factory.py              # Wrapper chain construction + opponent policy swap
+├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
+├── eval/
+│   ├── elo.py                  # ELO rating calculation + match utilities
+│   ├── match.py                # Detailed game statistics (round-level)
+│   └── opponent_pool.py        # PFSP opponent pool with sliding-window win-rate
+└── scripts/
+    ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
+    ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
+    └── evaluate.py             # Round-robin ELO tournament
+```
+
+### CLI Commands
+
+```bash
+uv run tc-train-baseline         # Baseline PPO training (fixed opponent)
+uv run tc-train-selfplay         # Self-play training (PFSP + curriculum)
+uv run tc-evaluate               # Round-robin ELO evaluation
+```
+
+### Wrapper Chain
+
+```
+PikachuVolleyballEnv (PettingZoo)
+  → RewardShaping (optional)
+  → SimplifyAction (18 → 13 relative actions)
+  → NormalizeObservation ([0, 1])
+  → ConvertSingleAgent (gym.Env for SB3)
+```
+
+`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for self-play.
+
+### VecEnv Strategy
+
+- **train_ppo**: `SubprocVecEnv` — fixed opponent, maximize CPU parallelism
+- **train_selfplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
+
 ## Development Environment
 
 - **Python**: 3.10+
