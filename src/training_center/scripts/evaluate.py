@@ -10,8 +10,8 @@ import argparse
 from itertools import combinations
 
 import numpy as np
-import wandb
 
+import wandb
 from training_center.eval.elo import INITIAL_ELO, update_elo
 from training_center.eval.match import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
+    parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
     args = parser.parse_args()
 
     meta = get_experiment_metadata()
@@ -36,6 +37,7 @@ def main() -> None:
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
+        name=args.wandb_run_name,
         config={
             "script": "evaluate",
             "players": player_specs,
