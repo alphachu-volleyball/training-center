@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument("--save-path", default="models/checkpoints/ppo_pikazoo")
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--noisy", action="store_true", help="Add random perturbation to ball initial state")
     parser.add_argument("--opponent", default="random", choices=["random", "builtin"])
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
@@ -82,6 +83,7 @@ def main() -> None:
             "side": args.side,
             "opponent": args.opponent,
             "seed": args.seed,
+            "noisy": args.noisy,
             "eval_freq": args.eval_freq,
             **meta,
         },
@@ -95,6 +97,7 @@ def main() -> None:
         opponent_policy=opponent_policy,
         use_subproc=True,
         seed=args.seed,
+        noisy=args.noisy,
     )
 
     model = PPO(
