@@ -47,6 +47,19 @@ uv run pytest
 uv run ruff check .
 ```
 
+## Usage
+
+```bash
+# Single-agent PPO training (vs builtin AI)
+uv run tc-train-ppo --opponent builtin --timesteps 1000000
+
+# Self-play training with PFSP
+uv run tc-train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+
+# Round-robin ELO evaluation
+uv run tc-evaluate --players random,builtin,models/checkpoints/p1/ppo --games 50
+```
+
 ## Experiment Tracking
 
 Each training run automatically records git commit hash and pika-zoo version to W&B / TensorBoard for reproducibility.
