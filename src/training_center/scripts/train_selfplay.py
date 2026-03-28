@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
+from pathlib import Path
 
 import numpy as np
 import wandb
@@ -26,11 +26,28 @@ from training_center.eval.opponent_pool import OpponentPool, make_opponent_polic
 from training_center.metadata import get_experiment_metadata
 
 
+def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:
+    """Read SB3 logger metrics and log to wandb with a prefix."""
+    if model.logger is not None and hasattr(model.logger, "name_to_value"):
+        metrics = {f"{prefix}/{k}": v for k, v in model.logger.name_to_value.items()}
+        if metrics:
+            run.log(metrics, step=model.num_timesteps)
+
+
 def _log_model_artifact(run: wandb.sdk.wandb_run.Run, name: str, path: str) -> None:
     """Log a saved model as a wandb artifact."""
     artifact = wandb.Artifact(name, type="model")
     artifact.add_file(path + ".zip")
     run.log_artifact(artifact)
+
+
+def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
+    """Record a sample game video using pika-zoo's play script."""
+    from pika_zoo.scripts.play import play
+
+    p1 = model_path if side == "player_1" else opponent
+    p2 = opponent if side == "player_1" else model_path
+    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
 
 
 def evaluate_selfplay_detailed(
@@ -76,21 +93,18 @@ def _run_matchup(
     rounds_all = []
     all_stats = []
     wins = 0
-    truncated_total = 0
 
     for _i in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        stats = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
-        all_stats.append(stats)
-        truncated_total += stats.truncated_rallies
+        episode = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
+        all_stats.append(episode)
         if perspective == "p1":
-            wins += 1 if stats.winner == "player_1" else 0
+            wins += 1 if episode.winner == "player_1" else 0
         else:
-            wins += 1 if stats.winner == "player_2" else 0
-        rounds_all.extend(stats.rounds)
+            wins += 1 if episode.winner == "player_2" else 0
+        rounds_all.extend(episode.rounds)
 
     summary = _summarize(wins, games, rounds_all, all_stats, perspective)
-    summary["truncated_rallies"] = truncated_total
     return name, summary
 
 
@@ -104,14 +118,14 @@ def _summarize(
     """Aggregate match statistics."""
     p1_serve = [r for r in rounds if r.server == "player_1"]
     p2_serve = [r for r in rounds if r.server == "player_2"]
-    rally_lengths = [r.rally_length for r in rounds]
+    durations = [r.duration for r in rounds]
 
     if perspective == "p1":
-        avg_score = float(np.mean([s.p1_score for s in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([s.p2_score for s in all_stats])) if all_stats else 0
+        avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
+        avg_opp_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
     else:
-        avg_score = float(np.mean([s.p2_score for s in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([s.p1_score for s in all_stats])) if all_stats else 0
+        avg_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
+        avg_opp_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
 
     return {
         "wins": wins,
@@ -119,9 +133,9 @@ def _summarize(
         "win_rate": wins / games,
         "avg_score": avg_score,
         "avg_opp_score": avg_opp_score,
-        "p1_serve_win": sum(1 for r in p1_serve if r.winner == "player_1") / max(len(p1_serve), 1),
-        "p2_serve_win": sum(1 for r in p2_serve if r.winner == "player_2") / max(len(p2_serve), 1),
-        "avg_rally": float(np.mean(rally_lengths)) if rally_lengths else 0,
+        "p1_serve_win": sum(1 for r in p1_serve if r.scorer == "player_1") / max(len(p1_serve), 1),
+        "p2_serve_win": sum(1 for r in p2_serve if r.scorer == "player_2") / max(len(p2_serve), 1),
+        "avg_rally": float(np.mean(durations)) if durations else 0,
     }
 
 
@@ -151,7 +165,7 @@ def _update_pool_stats(
     win_rates = []
     rng = np.random.default_rng()
     for path in checkpoints:
-        name = os.path.basename(path)
+        name = Path(path).name
         opp_model = PPO.load(path, device="cpu")
         opp_player = Player(name, "model", model=opp_model)
 
@@ -201,13 +215,16 @@ def main() -> None:
     parser.add_argument("--pfsp-eval-max", type=int, default=20)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
+    parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
     args = parser.parse_args()
 
+    save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
+        name=args.wandb_run_name,
         config={
             "script": "train_selfplay",
             "total_iterations": args.total_iterations,
@@ -303,8 +320,8 @@ def main() -> None:
         p2_model = PPO("MlpPolicy", p2_envs, seed=args.seed + 1, **ppo_kwargs)
 
     # Opponent pools
-    pool_p1 = OpponentPool(f"{args.save_dir}/p1", "p1")
-    pool_p2 = OpponentPool(f"{args.save_dir}/p2", "p2")
+    pool_p1 = OpponentPool(str(save_dir / "p1"), "p1")
+    pool_p2 = OpponentPool(str(save_dir / "p2"), "p2")
 
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv)")
@@ -328,10 +345,12 @@ def main() -> None:
 
         # --- Evaluate ---
         if iteration % args.eval_freq == 0:
-            p1_model.save(f"{args.save_dir}/p1/selfplay_latest")
-            p2_model.save(f"{args.save_dir}/p2/selfplay_latest")
-            _log_model_artifact(run, "p1-latest", f"{args.save_dir}/p1/selfplay_latest")
-            _log_model_artifact(run, "p2-latest", f"{args.save_dir}/p2/selfplay_latest")
+            p1_latest = str(save_dir / "p1" / "selfplay_latest")
+            p2_latest = str(save_dir / "p2" / "selfplay_latest")
+            p1_model.save(p1_latest)
+            p2_model.save(p2_latest)
+            _log_model_artifact(run, "p1-latest", p1_latest)
+            _log_model_artifact(run, "p2-latest", p2_latest)
             matchups = evaluate_selfplay_detailed(
                 p1_model, p2_model, games=args.eval_games, winning_score=args.eval_score
             )
@@ -348,21 +367,18 @@ def main() -> None:
                     flush=True,
                 )
 
-                # p1 perspective matchups
                 if match.startswith("p1_vs_"):
                     opponent = match[len("p1_vs_") :]
                     log_data[f"p1/eval/vs_{opponent}_winrate"] = s["win_rate"]
                     log_data[f"p1/eval/vs_{opponent}_avg_score"] = s["avg_score"]
                     log_data[f"p1/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
 
-                # p2 perspective matchups
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
                     log_data[f"p2/eval/vs_{opponent}_winrate"] = s["win_rate"]
                     log_data[f"p2/eval/vs_{opponent}_avg_score"] = s["avg_score"]
                     log_data[f"p2/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
 
-                # p1_vs_p2: log from both perspectives
                 if match == "p1_vs_p2":
                     log_data["p2/eval/vs_p1_winrate"] = 1.0 - s["win_rate"]
                     log_data["p2/eval/vs_p1_avg_score"] = s["avg_opp_score"]
@@ -411,13 +427,15 @@ def main() -> None:
             # Save best models
             if p1_wr > best_p1_builtin:
                 best_p1_builtin = p1_wr
-                p1_model.save(f"{args.save_dir}/p1/selfplay_best")
-                _log_model_artifact(run, "p1-best", f"{args.save_dir}/p1/selfplay_best")
+                p1_best = str(save_dir / "p1" / "selfplay_best")
+                p1_model.save(p1_best)
+                _log_model_artifact(run, "p1-best", p1_best)
                 print(f"  [BEST] p1 vs builtin: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
             if p2_wr > best_p2_builtin:
                 best_p2_builtin = p2_wr
-                p2_model.save(f"{args.save_dir}/p2/selfplay_best")
-                _log_model_artifact(run, "p2-best", f"{args.save_dir}/p2/selfplay_best")
+                p2_best = str(save_dir / "p2" / "selfplay_best")
+                p2_model.save(p2_best)
+                _log_model_artifact(run, "p2-best", p2_best)
                 print(f"  [BEST] p2 vs builtin: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
             run.log(log_data, step=step)
@@ -457,6 +475,7 @@ def main() -> None:
             flush=True,
         )
         p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+        _log_sb3_metrics(run, p1_model, "p1")
 
         # Train p2 against p1 opponent
         opp, opp_name, is_builtin = pool_p1.sample_opponent(latest_model=p1_model, builtin_prob=p2_builtin_prob)
@@ -472,13 +491,32 @@ def main() -> None:
             flush=True,
         )
         p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+        _log_sb3_metrics(run, p2_model, "p2")
 
     # Save final models
-    p1_model.save(f"{args.save_dir}/p1/selfplay_final")
-    p2_model.save(f"{args.save_dir}/p2/selfplay_final")
-    _log_model_artifact(run, "p1-final", f"{args.save_dir}/p1/selfplay_final")
-    _log_model_artifact(run, "p2-final", f"{args.save_dir}/p2/selfplay_final")
-    print(f"\nTraining complete. Models saved to {args.save_dir}/p1/ and {args.save_dir}/p2/")
+    p1_final = str(save_dir / "p1" / "selfplay_final")
+    p2_final = str(save_dir / "p2" / "selfplay_final")
+    p1_model.save(p1_final)
+    p2_model.save(p2_final)
+    _log_model_artifact(run, "p1-final", p1_final)
+    _log_model_artifact(run, "p2-final", p2_final)
+
+    # Record sample videos
+    from pika_zoo.scripts.play import play
+
+    for side, model_path in [("player_1", p1_final), ("player_2", p2_final)]:
+        label = "p1" if side == "player_1" else "p2"
+        for opp in ["builtin", "random"]:
+            video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
+            _record_video(model_path + ".zip", side, opp, video_path)
+            run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+
+    # p1 vs p2
+    p1v2_path = str(save_dir / "p1_vs_p2.mp4")
+    play(p1=p1_final + ".zip", p2=p2_final + ".zip", winning_score=5, render=False, record=p1v2_path, seed=0)
+    run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
+
+    print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
 
     p1_envs.close()
     p2_envs.close()
