@@ -62,7 +62,7 @@ uv run tc-evaluate --players random,builtin,models/checkpoints/p1/ppo --games 50
 
 ## Experiment Tracking
 
-Each training run automatically records git commit hash and pika-zoo version to W&B / TensorBoard for reproducibility.
+Each training run automatically records git commit hash and pika-zoo version to [W&B](https://wandb.ai/) for reproducibility.
 
 ## Development
 

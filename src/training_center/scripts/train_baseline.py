@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 
+import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
@@ -40,10 +41,11 @@ class EloEvalCallback(BaseCallback):
                 winning_score=5,
             )
 
-            self.logger.record("eval/elo", elo)
+            log_data = {"eval/elo": elo, "eval/step": self.num_timesteps}
             for opp_name, (wins, losses) in results.items():
-                win_pct = wins / (wins + losses)
-                self.logger.record(f"eval/win_rate_{opp_name}", win_pct)
+                log_data[f"eval/win_rate_{opp_name}"] = wins / (wins + losses)
+
+            wandb.run.log(log_data, step=self.num_timesteps)
 
             if self.verbose:
                 print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
@@ -64,11 +66,26 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--opponent", default="random", choices=["random", "builtin"])
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
-    parser.add_argument("--tensorboard-log", default=None)
+    parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
+    parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     args = parser.parse_args()
 
     meta = get_experiment_metadata()
-    print(f"Experiment metadata: {meta}")
+
+    run = wandb.init(
+        entity=args.wandb_entity,
+        project=args.wandb_project,
+        config={
+            "script": "train_baseline",
+            "timesteps": args.timesteps,
+            "num_envs": args.num_envs,
+            "side": args.side,
+            "opponent": args.opponent,
+            "seed": args.seed,
+            "eval_freq": args.eval_freq,
+            **meta,
+        },
+    )
 
     opponent_policy = BuiltinAI() if args.opponent == "builtin" else RandomAI()
 
@@ -86,7 +103,6 @@ def main() -> None:
         verbose=1,
         seed=args.seed,
         device="cpu",
-        tensorboard_log=args.tensorboard_log,
     )
 
     callbacks = []
@@ -105,7 +121,12 @@ def main() -> None:
     model.save(args.save_path)
     print(f"\nModel saved to {args.save_path}")
 
+    artifact = wandb.Artifact("baseline-final", type="model")
+    artifact.add_file(args.save_path + ".zip")
+    run.log_artifact(artifact)
+
     env.close()
+    run.finish()
 
 
 if __name__ == "__main__":
