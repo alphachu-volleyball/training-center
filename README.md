@@ -51,13 +51,13 @@ uv run ruff check .
 
 ```bash
 # Baseline PPO training (vs builtin AI)
-uv run tc-train-baseline --opponent builtin --timesteps 1000000
+uv run train-baseline --opponent builtin --timesteps 1000000
 
 # Self-play training with PFSP
-uv run tc-train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
 # Round-robin ELO evaluation
-uv run tc-evaluate --players random,builtin,models/checkpoints/p1/ppo --games 50
+uv run evaluate --players random,builtin,experiments/baseline/model --games 50
 ```
 
 ## Experiment Tracking

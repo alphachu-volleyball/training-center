@@ -1,7 +1,7 @@
 """Round-robin evaluation script (ELO + detailed stats).
 
 Usage:
-  uv run tc-evaluate --players random,builtin,models/checkpoints/p1/ppo --games 50
+  uv run evaluate --players random,builtin,experiments/baseline/model --games 50
 """
 
 from __future__ import annotations
