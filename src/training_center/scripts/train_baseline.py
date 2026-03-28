@@ -1,8 +1,8 @@
 """Baseline training script: PPO against a fixed opponent (random or builtin).
 
 Usage:
-  uv run tc-train-baseline --timesteps 1000000
-  uv run tc-train-baseline --opponent builtin --timesteps 1000000 --eval-freq 50000
+  uv run train-baseline --timesteps 1000000
+  uv run train-baseline --opponent builtin --timesteps 1000000 --eval-freq 50000
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Baseline PPO training against a fixed opponent")
     parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument("--num-envs", type=int, default=8)
-    parser.add_argument("--save-path", default="models/checkpoints/ppo_pikazoo")
+    parser.add_argument("--save-path", required=True, help="Path to save the trained model")
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--noisy", action="store_true", help="Add random perturbation to ball initial state")

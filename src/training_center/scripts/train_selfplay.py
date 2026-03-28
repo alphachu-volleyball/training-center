@@ -4,8 +4,8 @@ Alternately trains p1_model (left) and p2_model (right).
 Opponent mix: builtin_prob (rule AI) + remaining (PFSP pool).
 
 Usage:
-  uv run tc-train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
-  uv run tc-train-selfplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
+  uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+  uv run train-selfplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
 """
 
 from __future__ import annotations

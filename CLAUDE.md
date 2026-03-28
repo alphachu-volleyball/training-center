@@ -44,9 +44,9 @@ src/training_center/
 ### CLI Commands
 
 ```bash
-uv run tc-train-baseline         # Baseline PPO training (fixed opponent)
-uv run tc-train-selfplay         # Self-play training (PFSP + curriculum)
-uv run tc-evaluate               # Round-robin ELO evaluation
+uv run train-baseline         # Baseline PPO training (fixed opponent)
+uv run train-selfplay         # Self-play training (PFSP + curriculum)
+uv run evaluate               # Round-robin ELO evaluation
 ```
 
 ### Wrapper Chain
@@ -169,7 +169,8 @@ This links each experiment to its exact code version. No per-experiment tags nee
 ### Model Files
 
 - Never committed to Git (tens to hundreds of MB)
-- `models/checkpoints/`, `models/exported/` are in `.gitignore`
+- Training outputs go under `experiments/` (in `.gitignore`)
+- All models are also uploaded as W&B Artifacts
 - Deployed models are exported as ONNX and attached to GitHub Releases
 
 ## Hardware Notes
