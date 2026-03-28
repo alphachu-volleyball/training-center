@@ -18,3 +18,7 @@ build/
 # Models
 models/checkpoints/
 models/exported/
+
+# Experiment logs
+tensorboard_logs/
+wandb/

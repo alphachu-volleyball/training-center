@@ -10,7 +10,17 @@ requires-python = ">=3.10"
 dependencies = [
     "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.1.0",
     "stable-baselines3>=2.4.0",
+    "tensorboard>=2.20.0",
 ]
+
+[project.scripts]
+tc-train-ppo = "training_center.scripts.train_ppo:main"
+tc-train-selfplay = "training_center.scripts.train_selfplay:main"
+tc-evaluate = "training_center.scripts.evaluate:main"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
 
 [project.optional-dependencies]
 dev = [
