@@ -187,6 +187,7 @@ def main() -> None:
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--noisy", action="store_true", help="Add random perturbation to ball initial state")
     parser.add_argument("--builtin-prob", type=float, default=0.6)
     parser.add_argument("--curriculum", default=None, help="Path to curriculum JSON file")
     parser.add_argument("--adaptive", default=None, help="Path to adaptive curriculum JSON file")
@@ -217,6 +218,7 @@ def main() -> None:
             "builtin_prob": args.builtin_prob,
             "ent_coef": args.ent_coef,
             "eval_freq": args.eval_freq,
+            "noisy": args.noisy,
             "eval_games": args.eval_games,
             "save_dir": args.save_dir,
             **meta,
@@ -282,8 +284,10 @@ def main() -> None:
         return args.builtin_prob, 1.0 - args.builtin_prob
 
     # Create envs (DummyVecEnv for opponent policy swapping)
-    p1_envs = make_vec_env(n_envs=args.num_envs, agent="player_1", use_subproc=False, seed=args.seed)
-    p2_envs = make_vec_env(n_envs=args.num_envs, agent="player_2", use_subproc=False, seed=args.seed + 100)
+    p1_envs = make_vec_env(n_envs=args.num_envs, agent="player_1", use_subproc=False, seed=args.seed, noisy=args.noisy)
+    p2_envs = make_vec_env(
+        n_envs=args.num_envs, agent="player_2", use_subproc=False, seed=args.seed + 100, noisy=args.noisy
+    )
 
     # Initialize models
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)
