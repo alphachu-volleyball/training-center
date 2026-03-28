@@ -15,9 +15,8 @@ build/
 # OS
 .DS_Store
 
-# Models
-models/checkpoints/
-models/exported/
+# Experiments
+experiments/
 
 # Experiment logs
 wandb/
