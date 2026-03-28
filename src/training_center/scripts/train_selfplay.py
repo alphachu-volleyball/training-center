@@ -16,10 +16,10 @@ import random
 from pathlib import Path
 
 import numpy as np
+import wandb
 from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 
-import wandb
 from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.eval.match import Player, play_game
 from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy

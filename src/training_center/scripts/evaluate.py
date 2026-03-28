@@ -10,8 +10,8 @@ import argparse
 from itertools import combinations
 
 import numpy as np
-
 import wandb
+
 from training_center.eval.elo import INITIAL_ELO, update_elo
 from training_center.eval.match import make_player, play_game
 from training_center.metadata import get_experiment_metadata

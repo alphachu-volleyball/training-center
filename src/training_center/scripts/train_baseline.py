@@ -10,11 +10,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
-import wandb
 from training_center.env_factory import make_vec_env
 from training_center.eval.elo import evaluate_model
 from training_center.metadata import get_experiment_metadata
