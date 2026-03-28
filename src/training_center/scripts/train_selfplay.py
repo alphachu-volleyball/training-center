@@ -16,15 +16,22 @@ import os
 import random
 
 import numpy as np
+import wandb
 from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
-from stable_baselines3.common.logger import configure
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.eval.elo import Player
 from training_center.eval.match import play_game_detailed
 from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy
 from training_center.metadata import get_experiment_metadata
+
+
+def _log_model_artifact(run: wandb.sdk.wandb_run.Run, name: str, path: str) -> None:
+    """Log a saved model as a wandb artifact."""
+    artifact = wandb.Artifact(name, type="model")
+    artifact.add_file(path + ".zip")
+    run.log_artifact(artifact)
 
 
 def evaluate_selfplay_detailed(
@@ -187,16 +194,34 @@ def main() -> None:
     parser.add_argument("--eval-freq", type=int, default=10)
     parser.add_argument("--eval-games", type=int, default=10)
     parser.add_argument("--eval-score", type=int, default=5)
-    parser.add_argument("--tensorboard-log", default="tensorboard_logs/selfplay")
     parser.add_argument("--save-dir", required=True)
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--p1-init", default=None)
     parser.add_argument("--p2-init", default=None)
     parser.add_argument("--pfsp-eval-max", type=int, default=20)
+    parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
+    parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     args = parser.parse_args()
 
     meta = get_experiment_metadata()
-    print(f"Experiment metadata: {meta}")
+
+    run = wandb.init(
+        entity=args.wandb_entity,
+        project=args.wandb_project,
+        config={
+            "script": "train_selfplay",
+            "total_iterations": args.total_iterations,
+            "steps_per_iter": args.steps_per_iter,
+            "num_envs": args.num_envs,
+            "seed": args.seed,
+            "builtin_prob": args.builtin_prob,
+            "ent_coef": args.ent_coef,
+            "eval_freq": args.eval_freq,
+            "eval_games": args.eval_games,
+            "save_dir": args.save_dir,
+            **meta,
+        },
+    )
 
     # Load curriculum
     curriculum_schedule = None
@@ -274,12 +299,6 @@ def main() -> None:
     else:
         p2_model = PPO("MlpPolicy", p2_envs, seed=args.seed + 1, **ppo_kwargs)
 
-    # TensorBoard loggers
-    p1_logger = configure(f"{args.tensorboard_log}/p1", ["tensorboard", "stdout"])
-    p2_logger = configure(f"{args.tensorboard_log}/p2", ["tensorboard", "stdout"])
-    p1_model.set_logger(p1_logger)
-    p2_model.set_logger(p2_logger)
-
     # Opponent pools
     pool_p1 = OpponentPool(f"{args.save_dir}/p1", "p1")
     pool_p2 = OpponentPool(f"{args.save_dir}/p2", "p2")
@@ -302,16 +321,21 @@ def main() -> None:
     best_p2_builtin = -1.0
 
     for iteration in range(args.total_iterations):
+        step = p1_model.num_timesteps
+
         # --- Evaluate ---
         if iteration % args.eval_freq == 0:
             p1_model.save(f"{args.save_dir}/p1/selfplay_latest")
             p2_model.save(f"{args.save_dir}/p2/selfplay_latest")
+            _log_model_artifact(run, "p1-latest", f"{args.save_dir}/p1/selfplay_latest")
+            _log_model_artifact(run, "p2-latest", f"{args.save_dir}/p2/selfplay_latest")
             matchups = evaluate_selfplay_detailed(
                 p1_model, p2_model, games=args.eval_games, winning_score=args.eval_score
             )
 
-            step = p1_model.num_timesteps
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
+
+            log_data: dict = {"iteration": iteration}
             for match, s in matchups.items():
                 print(
                     f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
@@ -321,25 +345,25 @@ def main() -> None:
                     flush=True,
                 )
 
+                # p1 perspective matchups
                 if match.startswith("p1_vs_"):
                     opponent = match[len("p1_vs_") :]
-                    p1_logger.record(f"eval/vs_{opponent}_winrate", s["win_rate"])
-                    p1_logger.record(f"eval/vs_{opponent}_avg_score", s["avg_score"])
-                    p1_logger.record(f"eval/vs_{opponent}_avg_rally", s["avg_rally"])
+                    log_data[f"p1/eval/vs_{opponent}_winrate"] = s["win_rate"]
+                    log_data[f"p1/eval/vs_{opponent}_avg_score"] = s["avg_score"]
+                    log_data[f"p1/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
 
+                # p2 perspective matchups
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
-                    p2_logger.record(f"eval/vs_{opponent}_winrate", s["win_rate"])
-                    p2_logger.record(f"eval/vs_{opponent}_avg_score", s["avg_score"])
-                    p2_logger.record(f"eval/vs_{opponent}_avg_rally", s["avg_rally"])
+                    log_data[f"p2/eval/vs_{opponent}_winrate"] = s["win_rate"]
+                    log_data[f"p2/eval/vs_{opponent}_avg_score"] = s["avg_score"]
+                    log_data[f"p2/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
 
+                # p1_vs_p2: log from both perspectives
                 if match == "p1_vs_p2":
-                    p2_logger.record("eval/vs_p1_winrate", 1.0 - s["win_rate"])
-                    p2_logger.record("eval/vs_p1_avg_score", s["avg_opp_score"])
-                    p2_logger.record("eval/vs_p1_avg_rally", s["avg_rally"])
-
-            p1_logger.dump(step=step)
-            p2_logger.dump(step=step)
+                    log_data["p2/eval/vs_p1_winrate"] = 1.0 - s["win_rate"]
+                    log_data["p2/eval/vs_p1_avg_score"] = s["avg_opp_score"]
+                    log_data["p2/eval/vs_p1_avg_rally"] = s["avg_rally"]
 
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(
@@ -359,15 +383,13 @@ def main() -> None:
                 max_eval=args.pfsp_eval_max,
             )
             if p1_pfsp:
-                p1_logger.record("pfsp/avg_pool_winrate", p1_pfsp["avg_winrate"])
-                p1_logger.record("pfsp/min_winrate", p1_pfsp["min_winrate"])
-                p1_logger.record("pfsp/pool_size", p1_pfsp["pool_size"])
-                p1_logger.dump(step=step)
+                log_data["p1/pfsp/avg_pool_winrate"] = p1_pfsp["avg_winrate"]
+                log_data["p1/pfsp/min_winrate"] = p1_pfsp["min_winrate"]
+                log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
             if p2_pfsp:
-                p2_logger.record("pfsp/avg_pool_winrate", p2_pfsp["avg_winrate"])
-                p2_logger.record("pfsp/min_winrate", p2_pfsp["min_winrate"])
-                p2_logger.record("pfsp/pool_size", p2_pfsp["pool_size"])
-                p2_logger.dump(step=step)
+                log_data["p2/pfsp/avg_pool_winrate"] = p2_pfsp["avg_winrate"]
+                log_data["p2/pfsp/min_winrate"] = p2_pfsp["min_winrate"]
+                log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
 
             # Adaptive curriculum update
             p1_wr = matchups.get("p1_vs_builtin", {}).get("win_rate", 0)
@@ -387,25 +409,36 @@ def main() -> None:
             if p1_wr > best_p1_builtin:
                 best_p1_builtin = p1_wr
                 p1_model.save(f"{args.save_dir}/p1/selfplay_best")
+                _log_model_artifact(run, "p1-best", f"{args.save_dir}/p1/selfplay_best")
                 print(f"  [BEST] p1 vs builtin: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
             if p2_wr > best_p2_builtin:
                 best_p2_builtin = p2_wr
                 p2_model.save(f"{args.save_dir}/p2/selfplay_best")
+                _log_model_artifact(run, "p2-best", f"{args.save_dir}/p2/selfplay_best")
                 print(f"  [BEST] p2 vs builtin: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
+
+            run.log(log_data, step=step)
 
         # --- Train ---
         p1_builtin_prob, p1_pool_prob = get_probs(iteration, side="p1")
         p2_builtin_prob, p2_pool_prob = get_probs(iteration, side="p2")
 
-        p1_logger.record("curriculum/builtin_prob", p1_builtin_prob)
-        p1_logger.record("curriculum/pool_prob", p1_pool_prob)
-        p2_logger.record("curriculum/builtin_prob", p2_builtin_prob)
-        p2_logger.record("curriculum/pool_prob", p2_pool_prob)
+        run.log(
+            {
+                "p1/curriculum/builtin_prob": p1_builtin_prob,
+                "p1/curriculum/pool_prob": p1_pool_prob,
+                "p2/curriculum/builtin_prob": p2_builtin_prob,
+                "p2/curriculum/pool_prob": p2_pool_prob,
+            },
+            step=step,
+        )
 
         # Save to pool
         if iteration % args.save_interval == 0:
-            pool_p1.add_checkpoint(p1_model, iteration)
-            pool_p2.add_checkpoint(p2_model, iteration)
+            p1_path = pool_p1.add_checkpoint(p1_model, iteration)
+            p2_path = pool_p2.add_checkpoint(p2_model, iteration)
+            _log_model_artifact(run, f"p1-pool-iter{iteration:06d}", p1_path)
+            _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
 
         # Train p1 against p2 opponent
         opp, opp_name, is_builtin = pool_p2.sample_opponent(latest_model=p2_model, builtin_prob=p1_builtin_prob)
@@ -440,10 +473,13 @@ def main() -> None:
     # Save final models
     p1_model.save(f"{args.save_dir}/p1/selfplay_final")
     p2_model.save(f"{args.save_dir}/p2/selfplay_final")
+    _log_model_artifact(run, "p1-final", f"{args.save_dir}/p1/selfplay_final")
+    _log_model_artifact(run, "p2-final", f"{args.save_dir}/p2/selfplay_final")
     print(f"\nTraining complete. Models saved to {args.save_dir}/p1/ and {args.save_dir}/p2/")
 
     p1_envs.close()
     p2_envs.close()
+    run.finish()
 
 
 if __name__ == "__main__":

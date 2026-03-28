@@ -147,7 +147,7 @@ Training is not run in CI (requires GPU, long-running).
 
 ### Auto-recorded Metadata
 
-Every training run automatically logs the following to W&B / TensorBoard:
+Every training run automatically logs the following to W&B:
 
 - **commit**: `git rev-parse HEAD`
 - **dirty**: whether uncommitted changes exist
