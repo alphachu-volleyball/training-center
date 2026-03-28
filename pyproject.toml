@@ -1,0 +1,29 @@
+[project]
+name = "training-center"
+version = "1.0.0"
+description = "RL training pipeline for alphachu-volleyball"
+readme = "README.md"
+authors = [
+    { name = "namho kwon", email = "ootzk@kakao.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.1.0",
+    "stable-baselines3>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.11.0",
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
