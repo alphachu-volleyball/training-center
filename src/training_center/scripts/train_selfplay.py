@@ -16,14 +16,22 @@ import os
 import random
 
 import numpy as np
-import wandb
 from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 
+import wandb
 from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.eval.match import Player, play_game
 from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy
 from training_center.metadata import get_experiment_metadata
+
+
+def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:
+    """Read SB3 logger metrics and log to wandb with a prefix."""
+    if model.logger is not None and hasattr(model.logger, "name_to_value"):
+        metrics = {f"{prefix}/{k}": v for k, v in model.logger.name_to_value.items()}
+        if metrics:
+            run.log(metrics, step=model.num_timesteps)
 
 
 def _log_model_artifact(run: wandb.sdk.wandb_run.Run, name: str, path: str) -> None:
@@ -201,6 +209,7 @@ def main() -> None:
     parser.add_argument("--pfsp-eval-max", type=int, default=20)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
+    parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
     args = parser.parse_args()
 
     meta = get_experiment_metadata()
@@ -208,6 +217,7 @@ def main() -> None:
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
+        name=args.wandb_run_name,
         config={
             "script": "train_selfplay",
             "total_iterations": args.total_iterations,
@@ -457,6 +467,7 @@ def main() -> None:
             flush=True,
         )
         p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+        _log_sb3_metrics(run, p1_model, "p1")
 
         # Train p2 against p1 opponent
         opp, opp_name, is_builtin = pool_p1.sample_opponent(latest_model=p1_model, builtin_prob=p2_builtin_prob)
@@ -472,6 +483,7 @@ def main() -> None:
             flush=True,
         )
         p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+        _log_sb3_metrics(run, p2_model, "p2")
 
     # Save final models
     p1_model.save(f"{args.save_dir}/p1/selfplay_final")
