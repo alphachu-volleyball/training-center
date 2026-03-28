@@ -10,14 +10,25 @@ from __future__ import annotations
 import argparse
 import os
 
-import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
+import wandb
 from training_center.env_factory import make_vec_env
 from training_center.eval.elo import evaluate_model
 from training_center.metadata import get_experiment_metadata
+
+
+class WandbMetricsCallback(BaseCallback):
+    """Forward SB3 training metrics to wandb."""
+
+    def _on_step(self) -> bool:
+        if self.logger is not None and hasattr(self.logger, "name_to_value"):
+            metrics = {k: v for k, v in self.logger.name_to_value.items()}
+            if metrics:
+                wandb.run.log(metrics, step=self.num_timesteps)
+        return True
 
 
 class EloEvalCallback(BaseCallback):
@@ -69,6 +80,7 @@ def main() -> None:
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
+    parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
     args = parser.parse_args()
 
     meta = get_experiment_metadata()
@@ -76,6 +88,7 @@ def main() -> None:
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
+        name=args.wandb_run_name,
         config={
             "script": "train_baseline",
             "timesteps": args.timesteps,
@@ -108,7 +121,7 @@ def main() -> None:
         device="cpu",
     )
 
-    callbacks = []
+    callbacks = [WandbMetricsCallback()]
     if args.eval_freq > 0:
         os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
         callbacks.append(
@@ -118,7 +131,7 @@ def main() -> None:
             )
         )
 
-    model.learn(total_timesteps=args.timesteps, callback=callbacks or None)
+    model.learn(total_timesteps=args.timesteps, callback=callbacks)
 
     os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
     model.save(args.save_path)
