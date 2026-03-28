@@ -36,7 +36,7 @@ src/training_center/
 │   ├── match.py                # Detailed game statistics (round-level)
 │   └── opponent_pool.py        # PFSP opponent pool with sliding-window win-rate
 └── scripts/
-    ├── train_ppo.py            # Single-agent PPO training (SubprocVecEnv)
+    ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
     └── evaluate.py             # Round-robin ELO tournament
 ```
@@ -44,7 +44,7 @@ src/training_center/
 ### CLI Commands
 
 ```bash
-uv run tc-train-ppo              # Single-agent PPO training
+uv run tc-train-baseline         # Baseline PPO training (fixed opponent)
 uv run tc-train-selfplay         # Self-play training (PFSP + curriculum)
 uv run tc-evaluate               # Round-robin ELO evaluation
 ```

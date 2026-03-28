@@ -1,8 +1,8 @@
-"""Single-agent PPO training script.
+"""Baseline training script: PPO against a fixed opponent (random or builtin).
 
 Usage:
-  uv run tc-train-ppo --timesteps 1000000
-  uv run tc-train-ppo --opponent builtin --timesteps 1000000 --eval-freq 50000
+  uv run tc-train-baseline --timesteps 1000000
+  uv run tc-train-baseline --opponent builtin --timesteps 1000000 --eval-freq 50000
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from pika_zoo.ai.builtin import BuiltinAI
+from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -56,7 +56,7 @@ class EloEvalCallback(BaseCallback):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train PPO on Pikachu Volleyball")
+    parser = argparse.ArgumentParser(description="Baseline PPO training against a fixed opponent")
     parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--save-path", default="models/checkpoints/ppo_pikazoo")
@@ -70,7 +70,7 @@ def main() -> None:
     meta = get_experiment_metadata()
     print(f"Experiment metadata: {meta}")
 
-    opponent_policy = BuiltinAI() if args.opponent == "builtin" else None
+    opponent_policy = BuiltinAI() if args.opponent == "builtin" else RandomAI()
 
     env = make_vec_env(
         n_envs=args.num_envs,

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tc-train-ppo = "training_center.scripts.train_ppo:main"
+tc-train-baseline = "training_center.scripts.train_baseline:main"
 tc-train-selfplay = "training_center.scripts.train_selfplay:main"
 tc-evaluate = "training_center.scripts.evaluate:main"
 

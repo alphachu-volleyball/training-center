@@ -8,7 +8,7 @@ from collections import deque
 from collections.abc import Callable
 
 import numpy as np
-from pika_zoo.ai.builtin import BuiltinAI
+from pika_zoo.ai import BuiltinAI
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 

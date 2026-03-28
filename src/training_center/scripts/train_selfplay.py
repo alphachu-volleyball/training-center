@@ -16,7 +16,7 @@ import os
 import random
 
 import numpy as np
-from pika_zoo.ai.builtin import BuiltinAI
+from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.logger import configure
 

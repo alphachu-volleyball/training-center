@@ -50,8 +50,8 @@ uv run ruff check .
 ## Usage
 
 ```bash
-# Single-agent PPO training (vs builtin AI)
-uv run tc-train-ppo --opponent builtin --timesteps 1000000
+# Baseline PPO training (vs builtin AI)
+uv run tc-train-baseline --opponent builtin --timesteps 1000000
 
 # Self-play training with PFSP
 uv run tc-train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001

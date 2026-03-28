@@ -5,7 +5,7 @@ from __future__ import annotations
 from itertools import combinations
 
 import numpy as np
-from pika_zoo.ai.builtin import BuiltinAI
+from pika_zoo.ai import BuiltinAI
 from pika_zoo.env.pikachu_volleyball import PikachuVolleyballEnv
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
 from pika_zoo.wrappers.simplify_action import SimplifyAction

@@ -1,7 +1,7 @@
 """Tests for env_factory module."""
 
 import numpy as np
-from pika_zoo.ai.builtin import BuiltinAI
+from pika_zoo.ai import BuiltinAI
 from pika_zoo.wrappers.convert_single_agent import ConvertSingleAgent
 
 from training_center.env_factory import make_env, make_vec_env, set_opponent_policy
