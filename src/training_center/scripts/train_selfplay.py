@@ -502,12 +502,19 @@ def main() -> None:
     _log_model_artifact(run, "p2-final", p2_final)
 
     # Record sample videos
+    from pika_zoo.scripts.play import play
+
     for side, model_path in [("player_1", p1_final), ("player_2", p2_final)]:
         label = "p1" if side == "player_1" else "p2"
         for opp in ["builtin", "random"]:
             video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
             _record_video(model_path + ".zip", side, opp, video_path)
             run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+
+    # p1 vs p2
+    p1v2_path = str(save_dir / "p1_vs_p2.mp4")
+    play(p1=p1_final + ".zip", p2=p2_final + ".zip", winning_score=5, render=False, record=p1v2_path, seed=0)
+    run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
 
     print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
 
