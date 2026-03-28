@@ -61,24 +61,24 @@ def main() -> None:
 
         for _ in range(args.games):
             game_seed = int(rng.integers(0, 2**31))
-            stats = play_game(p1, p2, winning_score=args.score, seed=game_seed)
-            all_stats.append(stats)
-            result = 1 if stats.winner == "player_1" else 0
+            episode = play_game(p1, p2, winning_score=args.score, seed=game_seed)
+            all_stats.append(episode)
+            result = 1 if episode.winner == "player_1" else 0
             p1_wins += result
             elos[p1.name], elos[p2.name] = update_elo(elos[p1.name], elos[p2.name], result)
-            all_rounds.extend(stats.rounds)
+            all_rounds.extend(episode.rounds)
 
         p2_wins = args.games - p1_wins
-        avg_p1_score = np.mean([s.p1_score for s in all_stats])
-        avg_p2_score = np.mean([s.p2_score for s in all_stats])
+        avg_p1_score = np.mean([e.scores[0] for e in all_stats])
+        avg_p2_score = np.mean([e.scores[1] for e in all_stats])
 
         p1_serve = [r for r in all_rounds if r.server == "player_1"]
         p2_serve = [r for r in all_rounds if r.server == "player_2"]
-        rally_lengths = [r.rally_length for r in all_rounds]
+        durations = [r.duration for r in all_rounds]
 
         matchup_key = f"{p1.name}_vs_{p2.name}"
-        p1s_p1w = sum(1 for r in p1_serve if r.winner == "player_1") if p1_serve else 0
-        p2s_p2w = sum(1 for r in p2_serve if r.winner == "player_2") if p2_serve else 0
+        p1s_p1w = sum(1 for r in p1_serve if r.scorer == "player_1") if p1_serve else 0
+        p2s_p2w = sum(1 for r in p2_serve if r.scorer == "player_2") if p2_serve else 0
 
         run.log(
             {
@@ -89,8 +89,8 @@ def main() -> None:
                 f"{matchup_key}/avg_p2_score": float(avg_p2_score),
                 f"{matchup_key}/p1_serve_win_rate": p1s_p1w / max(len(p1_serve), 1),
                 f"{matchup_key}/p2_serve_win_rate": p2s_p2w / max(len(p2_serve), 1),
-                f"{matchup_key}/avg_rally": float(np.mean(rally_lengths)) if rally_lengths else 0,
-                f"{matchup_key}/median_rally": float(np.median(rally_lengths)) if rally_lengths else 0,
+                f"{matchup_key}/avg_rally": float(np.mean(durations)) if durations else 0,
+                f"{matchup_key}/median_rally": float(np.median(durations)) if durations else 0,
             }
         )
 
@@ -116,9 +116,9 @@ def main() -> None:
             )
 
         print(
-            f"\n  Rally: mean {np.mean(rally_lengths):.0f}"
-            f"  median {np.median(rally_lengths):.0f}"
-            f"  range {np.min(rally_lengths)}-{np.max(rally_lengths)}"
+            f"\n  Rally: mean {np.mean(durations):.0f}"
+            f"  median {np.median(durations):.0f}"
+            f"  range {np.min(durations)}-{np.max(durations)}"
         )
 
     # Log final ELO ratings

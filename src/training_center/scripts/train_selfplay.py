@@ -84,21 +84,18 @@ def _run_matchup(
     rounds_all = []
     all_stats = []
     wins = 0
-    truncated_total = 0
 
     for _i in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        stats = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
-        all_stats.append(stats)
-        truncated_total += stats.truncated_rallies
+        episode = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
+        all_stats.append(episode)
         if perspective == "p1":
-            wins += 1 if stats.winner == "player_1" else 0
+            wins += 1 if episode.winner == "player_1" else 0
         else:
-            wins += 1 if stats.winner == "player_2" else 0
-        rounds_all.extend(stats.rounds)
+            wins += 1 if episode.winner == "player_2" else 0
+        rounds_all.extend(episode.rounds)
 
     summary = _summarize(wins, games, rounds_all, all_stats, perspective)
-    summary["truncated_rallies"] = truncated_total
     return name, summary
 
 
@@ -112,14 +109,14 @@ def _summarize(
     """Aggregate match statistics."""
     p1_serve = [r for r in rounds if r.server == "player_1"]
     p2_serve = [r for r in rounds if r.server == "player_2"]
-    rally_lengths = [r.rally_length for r in rounds]
+    durations = [r.duration for r in rounds]
 
     if perspective == "p1":
-        avg_score = float(np.mean([s.p1_score for s in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([s.p2_score for s in all_stats])) if all_stats else 0
+        avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
+        avg_opp_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
     else:
-        avg_score = float(np.mean([s.p2_score for s in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([s.p1_score for s in all_stats])) if all_stats else 0
+        avg_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
+        avg_opp_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
 
     return {
         "wins": wins,
@@ -127,9 +124,9 @@ def _summarize(
         "win_rate": wins / games,
         "avg_score": avg_score,
         "avg_opp_score": avg_opp_score,
-        "p1_serve_win": sum(1 for r in p1_serve if r.winner == "player_1") / max(len(p1_serve), 1),
-        "p2_serve_win": sum(1 for r in p2_serve if r.winner == "player_2") / max(len(p2_serve), 1),
-        "avg_rally": float(np.mean(rally_lengths)) if rally_lengths else 0,
+        "p1_serve_win": sum(1 for r in p1_serve if r.scorer == "player_1") / max(len(p1_serve), 1),
+        "p2_serve_win": sum(1 for r in p2_serve if r.scorer == "player_2") / max(len(p2_serve), 1),
+        "avg_rally": float(np.mean(durations)) if durations else 0,
     }
 
 
