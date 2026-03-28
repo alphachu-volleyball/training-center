@@ -1,4 +1,4 @@
-"""Detailed game statistics collection and analysis."""
+"""Game simulation and statistics collection."""
 
 from __future__ import annotations
 
@@ -9,8 +9,39 @@ from pika_zoo.ai import BuiltinAI
 from pika_zoo.env.pikachu_volleyball import PikachuVolleyballEnv
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
 from pika_zoo.wrappers.simplify_action import SimplifyAction
+from stable_baselines3 import PPO
 
-from training_center.eval.elo import Player, make_player
+
+class Player:
+    """A player that can participate in matches."""
+
+    def __init__(self, name: str, player_type: str, model_path: str | None = None, model: PPO | None = None) -> None:
+        self.name = name
+        self.player_type = player_type  # "random", "builtin", "model"
+        self.model = model
+        if player_type == "model" and model_path and model is None:
+            self.model = PPO.load(model_path, device="cpu")
+
+    def get_action(self, obs: np.ndarray, env: PikachuVolleyballEnv, agent_id: str) -> int:
+        if self.player_type == "random":
+            return env.action_space(agent_id).sample()
+        elif self.player_type == "builtin":
+            return 0  # ai_policies handles the actual action
+        elif self.player_type == "model":
+            action, _ = self.model.predict(obs, deterministic=True)
+            return int(action)
+        raise ValueError(f"Unknown player type: {self.player_type}")
+
+
+def make_player(spec: str) -> Player:
+    """Create a Player from a string spec: 'random', 'builtin', or a model path."""
+    if spec == "random":
+        return Player("random", "random")
+    elif spec == "builtin":
+        return Player("builtin", "builtin")
+    else:
+        name = spec.rstrip("/").split("/")[-1]
+        return Player(name, "model", model_path=spec)
 
 
 @dataclass
@@ -61,7 +92,7 @@ MAX_RALLY_STEPS = 3000
 MAX_GAME_STEPS = 30000
 
 
-def play_game_detailed(
+def play_game(
     p1: Player,
     p2: Player,
     winning_score: int = 15,
@@ -141,7 +172,7 @@ def analyze_games(
     all_stats: list[GameStats] = []
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        stats = play_game_detailed(p1, p2, winning_score=winning_score, seed=game_seed)
+        stats = play_game(p1, p2, winning_score=winning_score, seed=game_seed)
         all_stats.append(stats)
 
     p1_wins = sum(1 for s in all_stats if s.winner == "player_1")

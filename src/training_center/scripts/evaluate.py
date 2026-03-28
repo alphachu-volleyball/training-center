@@ -12,8 +12,8 @@ from itertools import combinations
 import numpy as np
 import wandb
 
-from training_center.eval.elo import INITIAL_ELO, make_player, update_elo
-from training_center.eval.match import play_game_detailed
+from training_center.eval.elo import INITIAL_ELO, update_elo
+from training_center.eval.match import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 
 
@@ -59,7 +59,7 @@ def main() -> None:
 
         for _ in range(args.games):
             game_seed = int(rng.integers(0, 2**31))
-            stats = play_game_detailed(p1, p2, winning_score=args.score, seed=game_seed)
+            stats = play_game(p1, p2, winning_score=args.score, seed=game_seed)
             all_stats.append(stats)
             result = 1 if stats.winner == "player_1" else 0
             p1_wins += result

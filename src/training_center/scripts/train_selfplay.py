@@ -21,8 +21,7 @@ from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
-from training_center.eval.elo import Player
-from training_center.eval.match import play_game_detailed
+from training_center.eval.match import Player, play_game
 from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy
 from training_center.metadata import get_experiment_metadata
 
@@ -81,7 +80,7 @@ def _run_matchup(
 
     for _i in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        stats = play_game_detailed(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
+        stats = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
         all_stats.append(stats)
         truncated_total += stats.truncated_rallies
         if perspective == "p1":
@@ -160,10 +159,10 @@ def _update_pool_stats(
         for _ in range(games):
             game_seed = int(rng.integers(0, 2**31))
             if side == "p1":
-                stats = play_game_detailed(current_player, opp_player, winning_score=winning_score, seed=game_seed)
+                stats = play_game(current_player, opp_player, winning_score=winning_score, seed=game_seed)
                 won = stats.winner == "player_1"
             else:
-                stats = play_game_detailed(opp_player, current_player, winning_score=winning_score, seed=game_seed)
+                stats = play_game(opp_player, current_player, winning_score=winning_score, seed=game_seed)
                 won = stats.winner == "player_2"
             pool.update_stats(name, won)
             if won:
