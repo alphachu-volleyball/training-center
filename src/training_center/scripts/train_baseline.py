@@ -10,13 +10,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.env_factory import make_vec_env
-from training_center.eval.elo import evaluate_model
+from training_center.eval.elo import INITIAL_ELO, update_elo
+from training_center.eval.match import Player, play_game
 from training_center.metadata import get_experiment_metadata
 
 
@@ -40,8 +42,8 @@ class WandbMetricsCallback(BaseCallback):
         return True
 
 
-class EloEvalCallback(BaseCallback):
-    """Periodically evaluate the model's ELO during training."""
+class EvalCallback(BaseCallback):
+    """Periodically evaluate with detailed stats, save checkpoints, and log to wandb."""
 
     def __init__(self, eval_freq: int, save_path: Path, eval_games: int = 20, verbose: int = 1) -> None:
         super().__init__(verbose)
@@ -51,28 +53,58 @@ class EloEvalCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
-            tmp_path = self.save_path.parent / (self.save_path.name + "_tmp")
-            self.model.save(str(tmp_path))
+            # Save checkpoint
+            ckpt_path = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+            self.model.save(str(ckpt_path))
 
-            results, elo = evaluate_model(
-                str(tmp_path),
-                opponents=("random", "builtin"),
-                games=self.eval_games,
-                winning_score=5,
-            )
+            artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
+            artifact.add_file(str(ckpt_path) + ".zip")
+            wandb.run.log_artifact(artifact)
 
-            log_data = {"eval/elo": elo, "eval/step": self.num_timesteps}
-            for opp_name, (wins, losses) in results.items():
-                log_data[f"eval/win_rate_{opp_name}"] = wins / (wins + losses)
+            # Evaluate against each opponent
+            model_player = Player("model", "model", model=self.model)
+            elo = INITIAL_ELO
+            log_data: dict = {}
+            rng = np.random.default_rng()
 
+            for opp_name in ["random", "builtin"]:
+                opp = Player(opp_name, opp_name)
+                opp_elo = INITIAL_ELO
+                wins = 0
+                all_rounds = []
+
+                for _ in range(self.eval_games):
+                    seed = int(rng.integers(0, 2**31))
+                    episode = play_game(model_player, opp, winning_score=5, seed=seed)
+                    result = 1 if episode.winner == "player_1" else 0
+                    wins += result
+                    elo, opp_elo = update_elo(elo, opp_elo, result)
+                    all_rounds.extend(episode.rounds)
+
+                losses = self.eval_games - wins
+                p1_serve = [r for r in all_rounds if r.server == "player_1"]
+                p2_serve = [r for r in all_rounds if r.server == "player_2"]
+                durations = [r.duration for r in all_rounds]
+
+                log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
+                log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
+                if p1_serve:
+                    log_data[f"eval/vs_{opp_name}/p1_serve_win"] = sum(
+                        1 for r in p1_serve if r.scorer == "player_1"
+                    ) / len(p1_serve)
+                if p2_serve:
+                    log_data[f"eval/vs_{opp_name}/p2_serve_win"] = sum(
+                        1 for r in p2_serve if r.scorer == "player_2"
+                    ) / len(p2_serve)
+
+                if self.verbose:
+                    print(f"  vs {opp_name}: {wins}W {losses}L")
+
+            log_data["eval/elo"] = elo
             wandb.run.log(log_data, step=self.num_timesteps)
 
             if self.verbose:
                 print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
-                for opp_name, (wins, losses) in results.items():
-                    print(f"  vs {opp_name}: {wins}W {losses}L")
-
-            tmp_path.with_suffix(".zip").unlink()
 
         return True
 
@@ -136,7 +168,7 @@ def main() -> None:
     if args.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         callbacks.append(
-            EloEvalCallback(
+            EvalCallback(
                 eval_freq=args.eval_freq // args.num_envs,
                 save_path=save_path,
             )
