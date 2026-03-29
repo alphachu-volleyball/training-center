@@ -97,6 +97,12 @@ Model is always evaluated on its **training side** (`--side`).
 | `eval/vs_{opp}/serve_win_rate` | 0–1 | Scoring rate when model serves |
 | `eval/vs_{opp}/receive_win_rate` | 0–1 | Scoring rate when opponent serves |
 | `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
+| `eval/vs_{opp}/std_round_frames` | ≥ 0 | Std of round duration (low = repetitive pattern) |
+| `eval/vs_{opp}/action_entropy` | 0–log₂13 | Shannon entropy of action distribution |
+| `eval/vs_{opp}/power_hit_rate` | 0–1 | Power hits / ball touches |
+| `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
+| `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
+| `eval/vs_{opp}/receive_avg_round_frames` | > 0 | Mean round frames when opponent serves |
 | `eval/elo` | ~1000–2000 | ELO rating across all opponents (baseline 1500) |
 
 #### Self-play Evaluation (`{p1,p2}/eval/`)
@@ -111,6 +117,12 @@ p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
 | `{p1,p2}/eval/vs_{opp}/serve_win_rate` | Scoring rate when model serves |
 | `{p1,p2}/eval/vs_{opp}/receive_win_rate` | Scoring rate when opponent serves |
 | `{p1,p2}/eval/vs_{opp}/avg_round_frames` | Mean frames per round |
+| `{p1,p2}/eval/vs_{opp}/std_round_frames` | Std of round duration |
+| `{p1,p2}/eval/vs_{opp}/action_entropy` | Shannon entropy of action distribution |
+| `{p1,p2}/eval/vs_{opp}/power_hit_rate` | Power hits / ball touches |
+| `{p1,p2}/eval/vs_{opp}/ball_own_side_ratio` | Fraction of frames ball on model's half |
+| `{p1,p2}/eval/vs_{opp}/serve_avg_round_frames` | Mean round frames when model serves |
+| `{p1,p2}/eval/vs_{opp}/receive_avg_round_frames` | Mean round frames when opponent serves |
 | `{p1,p2}/pfsp/avg_pool_win_rate` | Average win rate against PFSP pool |
 | `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
 | `{p1,p2}/curriculum/builtin_prob` | Current builtin AI sampling probability |

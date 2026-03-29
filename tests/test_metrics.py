@@ -80,7 +80,7 @@ def test_ball_own_side_ratio():
     assert abs(m["ball_own_side_ratio"] - 0.75) < 1e-9
 
 
-def test_round_frames_std():
+def test_std_round_frames():
     r1 = _round([_frame() for _ in range(10)], server="player_1")
     r1.start_frame = 1
     r1.end_frame = 10
@@ -90,6 +90,6 @@ def test_round_frames_std():
     game = GameRecord(num_frames=30, rounds=[r1, r2])
     m = compute_eval_metrics(GamesRecord(games=[game]), "player_1")
     # mean=15, std = sqrt(((10-15)^2 + (20-15)^2)/2) = sqrt(25) = 5
-    assert abs(m["round_frames_std"] - 5.0) < 1e-9
+    assert abs(m["std_round_frames"] - 5.0) < 1e-9
     assert abs(m["serve_avg_round_frames"] - 10.0) < 1e-9
     assert abs(m["receive_avg_round_frames"] - 20.0) < 1e-9

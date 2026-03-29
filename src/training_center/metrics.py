@@ -77,10 +77,10 @@ def compute_eval_metrics(record: GamesRecord, model_side: str) -> dict[str, floa
         mean = sum(round_durations) / len(round_durations)
         variance = sum((d - mean) ** 2 for d in round_durations) / len(round_durations)
         metrics["avg_round_frames"] = mean
-        metrics["round_frames_std"] = math.sqrt(variance)
+        metrics["std_round_frames"] = math.sqrt(variance)
     else:
         metrics["avg_round_frames"] = 0.0
-        metrics["round_frames_std"] = 0.0
+        metrics["std_round_frames"] = 0.0
 
     if serve_round_durations:
         metrics["serve_avg_round_frames"] = sum(serve_round_durations) / len(serve_round_durations)

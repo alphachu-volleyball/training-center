@@ -430,7 +430,7 @@ def main() -> None:
                     "serve_win_rate",
                     "receive_win_rate",
                     "avg_round_frames",
-                    "round_frames_std",
+                    "std_round_frames",
                     "action_entropy",
                     "power_hit_rate",
                     "ball_own_side_ratio",

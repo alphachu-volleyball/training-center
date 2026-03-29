@@ -33,6 +33,7 @@ src/training_center/
 ├── env_factory.py              # Wrapper chain construction + opponent policy swap
 ├── game.py                     # Player, play_game, make_player
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
+├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
 └── scripts/
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
