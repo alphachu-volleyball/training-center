@@ -77,6 +77,7 @@ class EvalCallback(BaseCallback):
                 opp_elo = INITIAL_ELO
                 wins = 0
                 all_rounds = []
+                all_episodes = []
 
                 for _ in range(self.eval_games):
                     seed = int(rng.integers(0, 2**31))
@@ -88,20 +89,25 @@ class EvalCallback(BaseCallback):
                     wins += result
                     elo, opp_elo = update_elo(elo, opp_elo, result)
                     all_rounds.extend(episode.rounds)
+                    all_episodes.append(episode)
 
                 losses = self.eval_games - wins
+                model_idx = 0 if model_side == "player_1" else 1
                 model_serve = [r for r in all_rounds if r.server == model_side]
                 opp_serve = [r for r in all_rounds if r.server == opp_side]
                 durations = [r.duration for r in all_rounds]
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
+                log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean(
+                    [e.scores[model_idx] for e in all_episodes]
+                ))
                 log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
                 if model_serve:
-                    log_data[f"eval/vs_{opp_name}/model_serve_win"] = sum(
+                    log_data[f"eval/vs_{opp_name}/serve_win_rate"] = sum(
                         1 for r in model_serve if r.scorer == model_side
                     ) / len(model_serve)
                 if opp_serve:
-                    log_data[f"eval/vs_{opp_name}/model_receive_win"] = sum(
+                    log_data[f"eval/vs_{opp_name}/receive_win_rate"] = sum(
                         1 for r in opp_serve if r.scorer == model_side
                     ) / len(opp_serve)
 

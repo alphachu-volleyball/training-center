@@ -80,34 +80,44 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 
 ### Tracked Metrics
 
-#### Evaluation Metrics (per opponent)
+#### Baseline Evaluation (`eval/vs_{opp}/`)
 
-| Metric | Range | Unit | Description |
-|--------|-------|------|-------------|
-| `win_rate` | 0–1 | ratio | Win rate over eval games |
-| `p1_serve_win` | 0–1 | ratio | P1 scoring rate when P1 serves |
-| `p2_serve_win` | 0–1 | ratio | P2 scoring rate when P2 serves |
-| `avg_round_frames` | > 0 | frames | Mean frames per round (25 FPS) |
-| `elo` | ~1000–2000 | rating | ELO rating (baseline 1500) |
+Model is always evaluated on its **training side** (`--side`).
+`{opp}`: `random`, `builtin`
+
+| Metric | Range | Description |
+|--------|-------|-------------|
+| `eval/vs_{opp}/win_rate` | 0–1 | Win rate over eval games |
+| `eval/vs_{opp}/avg_score` | 0–5 | Average model score per game |
+| `eval/vs_{opp}/serve_win_rate` | 0–1 | Scoring rate when model serves |
+| `eval/vs_{opp}/receive_win_rate` | 0–1 | Scoring rate when opponent serves |
+| `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
+| `eval/elo` | ~1000–2000 | ELO rating across all opponents (baseline 1500) |
+
+#### Self-play Evaluation (`{p1,p2}/eval/`)
+
+p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
+`{opp}`: `p2`/`p1`, `random`, `builtin`
+
+| Metric | Description |
+|--------|-------------|
+| `{p1,p2}/eval/vs_{opp}/win_rate` | Win rate per side per opponent |
+| `{p1,p2}/eval/vs_{opp}/avg_score` | Average score per game |
+| `{p1,p2}/eval/vs_{opp}/serve_win_rate` | Scoring rate when model serves |
+| `{p1,p2}/eval/vs_{opp}/receive_win_rate` | Scoring rate when opponent serves |
+| `{p1,p2}/eval/vs_{opp}/avg_round_frames` | Mean frames per round |
+| `{p1,p2}/pfsp/avg_pool_win_rate` | Average win rate against PFSP pool |
+| `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
+| `{p1,p2}/curriculum/builtin_prob` | Current builtin AI sampling probability |
 
 #### Training Metrics (SB3 PPO)
 
 | Metric | Description |
 |--------|-------------|
-| `rollout/ep_rew_mean` | Mean episode reward |
 | `train/loss` | PPO total loss |
 | `train/entropy_loss` | Policy entropy (lower = more deterministic) |
 | `train/explained_variance` | Value function accuracy (1.0 = perfect) |
 | `train/approx_kl` | KL divergence between old and new policy |
-
-#### Self-play Specific
-
-| Metric | Description |
-|--------|-------------|
-| `{p1,p2}/eval/vs_{opp}_winrate` | Win rate per side per opponent |
-| `{p1,p2}/pfsp/avg_pool_winrate` | Average win rate against PFSP pool |
-| `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
-| `{p1,p2}/curriculum/builtin_prob` | Current builtin AI sampling probability |
 
 #### Run Config (auto-recorded)
 

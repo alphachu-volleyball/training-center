@@ -116,8 +116,9 @@ def _summarize(
     perspective: str,
 ) -> dict:
     """Aggregate match statistics."""
-    p1_serve = [r for r in rounds if r.server == "player_1"]
-    p2_serve = [r for r in rounds if r.server == "player_2"]
+    model_side = "player_1" if perspective == "p1" else "player_2"
+    model_serve = [r for r in rounds if r.server == model_side]
+    opp_serve = [r for r in rounds if r.server != model_side]
     durations = [r.duration for r in rounds]
 
     if perspective == "p1":
@@ -133,8 +134,8 @@ def _summarize(
         "win_rate": wins / games,
         "avg_score": avg_score,
         "avg_opp_score": avg_opp_score,
-        "p1_serve_win": sum(1 for r in p1_serve if r.scorer == "player_1") / max(len(p1_serve), 1),
-        "p2_serve_win": sum(1 for r in p2_serve if r.scorer == "player_2") / max(len(p2_serve), 1),
+        "serve_win_rate": sum(1 for r in model_serve if r.scorer == model_side) / max(len(model_serve), 1),
+        "receive_win_rate": sum(1 for r in opp_serve if r.scorer == model_side) / max(len(opp_serve), 1),
         "avg_round_frames": float(np.mean(durations)) if durations else 0,
     }
 
@@ -362,27 +363,31 @@ def main() -> None:
                 print(
                     f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
                     f"  score: {s['avg_score']:.1f}-{s['avg_opp_score']:.1f}"
-                    f"  serve: p1={s['p1_serve_win'] * 100:.0f}% p2={s['p2_serve_win'] * 100:.0f}%"
+                    f"  serve: {s['serve_win_rate'] * 100:.0f}% receive: {s['receive_win_rate'] * 100:.0f}%"
                     f"  round: {s['avg_round_frames']:.0f}f",
                     flush=True,
                 )
 
                 if match.startswith("p1_vs_"):
                     opponent = match[len("p1_vs_") :]
-                    log_data[f"p1/eval/vs_{opponent}_winrate"] = s["win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}_avg_score"] = s["avg_score"]
-                    log_data[f"p1/eval/vs_{opponent}_avg_round_frames"] = s["avg_round_frames"]
+                    log_data[f"p1/eval/vs_{opponent}/win_rate"] = s["win_rate"]
+                    log_data[f"p1/eval/vs_{opponent}/avg_score"] = s["avg_score"]
+                    log_data[f"p1/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
+                    log_data[f"p1/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
+                    log_data[f"p1/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
 
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
-                    log_data[f"p2/eval/vs_{opponent}_winrate"] = s["win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}_avg_score"] = s["avg_score"]
-                    log_data[f"p2/eval/vs_{opponent}_avg_round_frames"] = s["avg_round_frames"]
+                    log_data[f"p2/eval/vs_{opponent}/win_rate"] = s["win_rate"]
+                    log_data[f"p2/eval/vs_{opponent}/avg_score"] = s["avg_score"]
+                    log_data[f"p2/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
+                    log_data[f"p2/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
+                    log_data[f"p2/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
 
                 if match == "p1_vs_p2":
-                    log_data["p2/eval/vs_p1_winrate"] = 1.0 - s["win_rate"]
-                    log_data["p2/eval/vs_p1_avg_score"] = s["avg_opp_score"]
-                    log_data["p2/eval/vs_p1_avg_round_frames"] = s["avg_round_frames"]
+                    log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
+                    log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
+                    log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
 
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(
@@ -402,12 +407,12 @@ def main() -> None:
                 max_eval=args.pfsp_eval_max,
             )
             if p1_pfsp:
-                log_data["p1/pfsp/avg_pool_winrate"] = p1_pfsp["avg_winrate"]
-                log_data["p1/pfsp/min_winrate"] = p1_pfsp["min_winrate"]
+                log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
+                log_data["p1/pfsp/min_win_rate"] = p1_pfsp["min_winrate"]
                 log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
             if p2_pfsp:
-                log_data["p2/pfsp/avg_pool_winrate"] = p2_pfsp["avg_winrate"]
-                log_data["p2/pfsp/min_winrate"] = p2_pfsp["min_winrate"]
+                log_data["p2/pfsp/avg_pool_win_rate"] = p2_pfsp["avg_winrate"]
+                log_data["p2/pfsp/min_win_rate"] = p2_pfsp["min_winrate"]
                 log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
 
             # Adaptive curriculum update
