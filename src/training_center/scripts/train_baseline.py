@@ -101,8 +101,8 @@ class EvalCallback(BaseCallback):
                         1 for r in model_serve if r.scorer == model_side
                     ) / len(model_serve)
                 if opp_serve:
-                    log_data[f"eval/vs_{opp_name}/opp_serve_win"] = sum(
-                        1 for r in opp_serve if r.scorer == opp_side
+                    log_data[f"eval/vs_{opp_name}/model_receive_win"] = sum(
+                        1 for r in opp_serve if r.scorer == model_side
                     ) / len(opp_serve)
 
                 if self.verbose:
