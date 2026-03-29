@@ -64,6 +64,18 @@ uv run evaluate --players random,builtin,experiments/baseline/model --games 50
 
 Each training run automatically records git commit hash and pika-zoo version to [W&B](https://wandb.ai/) for reproducibility.
 
+```bash
+# First time: log in to W&B
+uv run wandb login
+
+# Runs are logged to --wandb-entity / --wandb-project (defaults: ootzk / alphachu-volleyball)
+# To log to your own workspace:
+uv run train-baseline --wandb-entity your-username --wandb-project your-project ...
+
+# Optionally name your run:
+uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
+```
+
 ### Tracked Metrics
 
 #### Evaluation Metrics (per opponent)
