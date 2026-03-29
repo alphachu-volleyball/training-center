@@ -64,6 +64,45 @@ uv run evaluate --players random,builtin,experiments/baseline/model --games 50
 
 Each training run automatically records git commit hash and pika-zoo version to [W&B](https://wandb.ai/) for reproducibility.
 
+### Tracked Metrics
+
+#### Evaluation Metrics (per opponent)
+
+| Metric | Range | Unit | Description |
+|--------|-------|------|-------------|
+| `win_rate` | 0–1 | ratio | Win rate over eval games |
+| `p1_serve_win` | 0–1 | ratio | P1 scoring rate when P1 serves |
+| `p2_serve_win` | 0–1 | ratio | P2 scoring rate when P2 serves |
+| `avg_round_frames` | > 0 | frames | Mean frames per round (25 FPS) |
+| `elo` | ~1000–2000 | rating | ELO rating (baseline 1500) |
+
+#### Training Metrics (SB3 PPO)
+
+| Metric | Description |
+|--------|-------------|
+| `rollout/ep_rew_mean` | Mean episode reward |
+| `train/loss` | PPO total loss |
+| `train/entropy_loss` | Policy entropy (lower = more deterministic) |
+| `train/explained_variance` | Value function accuracy (1.0 = perfect) |
+| `train/approx_kl` | KL divergence between old and new policy |
+
+#### Self-play Specific
+
+| Metric | Description |
+|--------|-------------|
+| `{p1,p2}/eval/vs_{opp}_winrate` | Win rate per side per opponent |
+| `{p1,p2}/pfsp/avg_pool_winrate` | Average win rate against PFSP pool |
+| `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
+| `{p1,p2}/curriculum/builtin_prob` | Current builtin AI sampling probability |
+
+#### Run Config (auto-recorded)
+
+| Field | Description |
+|-------|-------------|
+| `commit` | Git HEAD hash |
+| `dirty` | Uncommitted changes exist |
+| `pika_zoo_version` | Pinned pika-zoo version |
+
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for the full development guide.
