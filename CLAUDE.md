@@ -140,7 +140,7 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 |---------|--------|
 | PR, push to main | ruff lint, pytest |
 
-Training is not run in CI (requires GPU, long-running).
+Training is not run in CI (long-running).
 
 ## Experiment Tracking
 
