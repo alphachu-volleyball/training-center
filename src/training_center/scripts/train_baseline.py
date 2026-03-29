@@ -16,9 +16,9 @@ from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
+from training_center.elo import INITIAL_ELO, update_elo
 from training_center.env_factory import make_vec_env
-from training_center.eval.elo import INITIAL_ELO, update_elo
-from training_center.eval.match import Player, play_game
+from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
 
 
@@ -45,10 +45,13 @@ class WandbMetricsCallback(BaseCallback):
 class EvalCallback(BaseCallback):
     """Periodically evaluate with detailed stats, save checkpoints, and log to wandb."""
 
-    def __init__(self, eval_freq: int, save_path: Path, eval_games: int = 20, verbose: int = 1) -> None:
+    def __init__(
+        self, eval_freq: int, save_path: Path, side: str = "player_1", eval_games: int = 20, verbose: int = 1
+    ) -> None:
         super().__init__(verbose)
         self.eval_freq = eval_freq
         self.save_path = save_path
+        self.side = side
         self.eval_games = eval_games
 
     def _on_step(self) -> bool:
@@ -61,8 +64,10 @@ class EvalCallback(BaseCallback):
             artifact.add_file(str(ckpt_path) + ".zip")
             wandb.run.log_artifact(artifact)
 
-            # Evaluate against each opponent
+            # Evaluate against each opponent (place model on its training side)
             model_player = Player("model", "model", model=self.model)
+            model_side = self.side
+            opp_side = "player_2" if model_side == "player_1" else "player_1"
             elo = INITIAL_ELO
             log_data: dict = {}
             rng = np.random.default_rng()
@@ -72,30 +77,37 @@ class EvalCallback(BaseCallback):
                 opp_elo = INITIAL_ELO
                 wins = 0
                 all_rounds = []
+                all_episodes = []
 
                 for _ in range(self.eval_games):
                     seed = int(rng.integers(0, 2**31))
-                    episode = play_game(model_player, opp, winning_score=5, seed=seed)
-                    result = 1 if episode.winner == "player_1" else 0
+                    if model_side == "player_1":
+                        episode = play_game(model_player, opp, winning_score=5, seed=seed)
+                    else:
+                        episode = play_game(opp, model_player, winning_score=5, seed=seed)
+                    result = 1 if episode.winner == model_side else 0
                     wins += result
                     elo, opp_elo = update_elo(elo, opp_elo, result)
                     all_rounds.extend(episode.rounds)
+                    all_episodes.append(episode)
 
                 losses = self.eval_games - wins
-                p1_serve = [r for r in all_rounds if r.server == "player_1"]
-                p2_serve = [r for r in all_rounds if r.server == "player_2"]
+                model_idx = 0 if model_side == "player_1" else 1
+                model_serve = [r for r in all_rounds if r.server == model_side]
+                opp_serve = [r for r in all_rounds if r.server == opp_side]
                 durations = [r.duration for r in all_rounds]
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
+                log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean([e.scores[model_idx] for e in all_episodes]))
                 log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
-                if p1_serve:
-                    log_data[f"eval/vs_{opp_name}/p1_serve_win"] = sum(
-                        1 for r in p1_serve if r.scorer == "player_1"
-                    ) / len(p1_serve)
-                if p2_serve:
-                    log_data[f"eval/vs_{opp_name}/p2_serve_win"] = sum(
-                        1 for r in p2_serve if r.scorer == "player_2"
-                    ) / len(p2_serve)
+                if model_serve:
+                    log_data[f"eval/vs_{opp_name}/serve_win_rate"] = sum(
+                        1 for r in model_serve if r.scorer == model_side
+                    ) / len(model_serve)
+                if opp_serve:
+                    log_data[f"eval/vs_{opp_name}/receive_win_rate"] = sum(
+                        1 for r in opp_serve if r.scorer == model_side
+                    ) / len(opp_serve)
 
                 if self.verbose:
                     print(f"  vs {opp_name}: {wins}W {losses}L")
@@ -171,6 +183,7 @@ def main() -> None:
             EvalCallback(
                 eval_freq=args.eval_freq // args.num_envs,
                 save_path=save_path,
+                side=args.side,
             )
         )
 

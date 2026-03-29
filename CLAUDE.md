@@ -29,16 +29,15 @@ This repo is NOT consumed as a library by other repos. Its output is model artif
 
 ```
 src/training_center/
+├── elo.py                      # ELO rating calculation
 ├── env_factory.py              # Wrapper chain construction + opponent policy swap
+├── game.py                     # Player, play_game, make_player
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
-├── eval/
-│   ├── elo.py                  # ELO rating calculation + match utilities
-│   ├── match.py                # Detailed game statistics (round-level)
-│   └── opponent_pool.py        # PFSP opponent pool with sliding-window win-rate
+├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
 └── scripts/
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
-    └── evaluate.py             # Round-robin ELO tournament
+    └── evaluate.py             # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
 
 ### CLI Commands
@@ -141,9 +140,11 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 |---------|--------|
 | PR, push to main | ruff lint, pytest |
 
-Training is not run in CI (requires GPU, long-running).
+Training is not run in CI (long-running).
 
 ## Experiment Tracking
+
+For the full list of tracked metrics, see [README.md § Tracked Metrics](README.md#tracked-metrics).
 
 ### Auto-recorded Metadata
 

@@ -12,7 +12,7 @@ from stable_baselines3 import PPO
 
 
 class Player:
-    """A player that can participate in matches."""
+    """A player that can participate in games."""
 
     def __init__(self, name: str, player_type: str, model_path: str | None = None, model: PPO | None = None) -> None:
         self.name = name
