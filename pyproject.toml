@@ -23,6 +23,9 @@ requires = ["uv_build>=0.10.12,<0.11.0"]
 build-backend = "uv_build"
 
 [project.optional-dependencies]
+rendering = [
+    "pika-zoo[rendering] @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.2.0",
+]
 dev = [
     "ruff>=0.11.0",
     "pytest>=8.0.0",
