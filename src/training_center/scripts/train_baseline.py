@@ -88,6 +88,7 @@ def main() -> None:
     parser.add_argument("--opponent", default="random", choices=["random", "builtin"])
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
+    parser.add_argument("--resume-steps", action="store_true", help="Continue step count from init-model")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
@@ -141,7 +142,7 @@ def main() -> None:
             )
         )
 
-    model.learn(total_timesteps=args.timesteps, callback=callbacks)
+    model.learn(total_timesteps=args.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(save_path))
