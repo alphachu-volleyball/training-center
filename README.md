@@ -58,8 +58,8 @@ uv run train-baseline --opponent builtin --timesteps 1000000
 # Self-play training with PFSP
 uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
-# Round-robin ELO evaluation
-uv run evaluate --players random,builtin,experiments/baseline/model --games 50
+# Round-robin ELO evaluation (p1 pool × p2 pool)
+uv run evaluate --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
 ```
 
 ## Experiment Tracking
@@ -81,6 +81,9 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 ### Tracked Metrics
 
 **round** = serve → score (1 point), **game** = first to winning_score (multiple rounds)
+
+> [!IMPORTANT]
+> All models are evaluated on their **training side**. Observations use absolute coordinates, so a model trained as player_2 cannot be evaluated as player_1 (domain shift). The evaluate script takes separate `--p1`/`--p2` pools to ensure correct placement.
 
 #### Baseline Evaluation (`eval/vs_{opp}/`)
 
