@@ -144,6 +144,8 @@ Training is not run in CI (requires GPU, long-running).
 
 ## Experiment Tracking
 
+For the full list of tracked metrics, see [README.md § Tracked Metrics](README.md#tracked-metrics).
+
 ### Auto-recorded Metadata
 
 Every training run automatically logs the following to W&B:
