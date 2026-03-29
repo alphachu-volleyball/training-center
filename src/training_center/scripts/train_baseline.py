@@ -51,11 +51,17 @@ class EloEvalCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
-            tmp_path = self.save_path.parent / (self.save_path.name + "_tmp")
-            self.model.save(str(tmp_path))
+            # Save checkpoint
+            ckpt_path = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+            self.model.save(str(ckpt_path))
+
+            # Upload as artifact
+            artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
+            artifact.add_file(str(ckpt_path) + ".zip")
+            wandb.run.log_artifact(artifact)
 
             results, elo = evaluate_model(
-                str(tmp_path),
+                str(ckpt_path),
                 opponents=("random", "builtin"),
                 games=self.eval_games,
                 winning_score=5,
@@ -71,8 +77,6 @@ class EloEvalCallback(BaseCallback):
                 print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
                 for opp_name, (wins, losses) in results.items():
                     print(f"  vs {opp_name}: {wins}W {losses}L")
-
-            tmp_path.with_suffix(".zip").unlink()
 
         return True
 
