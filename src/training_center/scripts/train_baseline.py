@@ -14,6 +14,7 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
+from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -21,6 +22,7 @@ from training_center.elo import INITIAL_ELO, update_elo
 from training_center.env_factory import make_vec_env
 from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
+from training_center.metrics import compute_eval_metrics
 
 
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
@@ -96,6 +98,7 @@ class EvalCallback(BaseCallback):
                             winning_score=5,
                             seed=seed,
                             simplify_observation=self.simplify_observation,
+                            record_frames=True,
                         )
                     else:
                         episode = play_game(
@@ -104,6 +107,7 @@ class EvalCallback(BaseCallback):
                             winning_score=5,
                             seed=seed,
                             simplify_observation=self.simplify_observation,
+                            record_frames=True,
                         )
                     result = 1 if episode.winner == model_side else 0
                     wins += result
@@ -115,11 +119,13 @@ class EvalCallback(BaseCallback):
                 model_idx = 0 if model_side == "player_1" else 1
                 model_serve = [r for r in all_rounds if r.server == model_side]
                 opp_serve = [r for r in all_rounds if r.server == opp_side]
-                durations = [r.duration for r in all_rounds]
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
                 log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean([e.scores[model_idx] for e in all_episodes]))
-                log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
+
+                detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
+                for k, v in detail.items():
+                    log_data[f"eval/vs_{opp_name}/{k}"] = v
                 if model_serve:
                     log_data[f"eval/vs_{opp_name}/serve_win_rate"] = sum(
                         1 for r in model_serve if r.scorer == model_side

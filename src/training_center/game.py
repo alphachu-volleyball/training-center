@@ -71,12 +71,14 @@ def play_game(
     seed: int | None = None,
     max_game_steps: int = MAX_GAME_STEPS,
     simplify_observation: bool = False,
+    record_frames: bool = False,
 ) -> GameRecord:
     """Play one game and return a GameRecord with round-by-round statistics.
 
     When both players have AIPolicy, the env handles all actions internally.
     When a player has an in-memory model, a wrapper chain is used for prediction.
     ``simplify_observation`` must match the training-time setting for in-memory models.
+    ``record_frames`` enables per-frame recording for detailed analysis.
     Truncates games at max_game_steps.
     """
     ai_policies: dict[str, AIPolicy] = {}
@@ -88,7 +90,7 @@ def play_game(
     needs_wrappers = p1.model is not None or p2.model is not None
 
     raw_env = PikachuVolleyballEnv(winning_score=winning_score, serve="winner", ai_policies=ai_policies or None)
-    env = RecordGame(raw_env, record_frames=False)
+    env = RecordGame(raw_env, record_frames=record_frames)
 
     if needs_wrappers:
         env = SimplifyAction(env)

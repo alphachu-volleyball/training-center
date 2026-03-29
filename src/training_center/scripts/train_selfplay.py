@@ -19,11 +19,13 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
+from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
+from training_center.metrics import compute_eval_metrics
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
 
 
@@ -102,7 +104,12 @@ def _run_matchup(
     for _i in range(games):
         game_seed = int(rng.integers(0, 2**31))
         episode = play_game(
-            p1_player, p2_player, winning_score=winning_score, seed=game_seed, simplify_observation=simplify_observation
+            p1_player,
+            p2_player,
+            winning_score=winning_score,
+            seed=game_seed,
+            simplify_observation=simplify_observation,
+            record_frames=True,
         )
         all_stats.append(episode)
         if perspective == "p1":
@@ -126,7 +133,6 @@ def _summarize(
     model_side = "player_1" if perspective == "p1" else "player_2"
     model_serve = [r for r in rounds if r.server == model_side]
     opp_serve = [r for r in rounds if r.server != model_side]
-    durations = [r.duration for r in rounds]
 
     if perspective == "p1":
         avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
@@ -134,6 +140,8 @@ def _summarize(
     else:
         avg_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
         avg_opp_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
+
+    detail = compute_eval_metrics(GamesRecord(games=all_stats), model_side)
 
     return {
         "wins": wins,
@@ -143,7 +151,7 @@ def _summarize(
         "avg_opp_score": avg_opp_score,
         "serve_win_rate": sum(1 for r in model_serve if r.scorer == model_side) / max(len(model_serve), 1),
         "receive_win_rate": sum(1 for r in opp_serve if r.scorer == model_side) / max(len(opp_serve), 1),
-        "avg_round_frames": float(np.mean(durations)) if durations else 0,
+        **detail,
     }
 
 
@@ -416,21 +424,31 @@ def main() -> None:
                     flush=True,
                 )
 
+                metric_keys = [
+                    "win_rate",
+                    "avg_score",
+                    "serve_win_rate",
+                    "receive_win_rate",
+                    "avg_round_frames",
+                    "round_frames_std",
+                    "action_entropy",
+                    "power_hit_rate",
+                    "ball_own_side_ratio",
+                    "serve_avg_round_frames",
+                    "receive_avg_round_frames",
+                ]
+
                 if match.startswith("p1_vs_"):
                     opponent = match[len("p1_vs_") :]
-                    log_data[f"p1/eval/vs_{opponent}/win_rate"] = s["win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/avg_score"] = s["avg_score"]
-                    log_data[f"p1/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
+                    for k in metric_keys:
+                        if k in s:
+                            log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
 
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
-                    log_data[f"p2/eval/vs_{opponent}/win_rate"] = s["win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/avg_score"] = s["avg_score"]
-                    log_data[f"p2/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
+                    for k in metric_keys:
+                        if k in s:
+                            log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
 
                 if match == "p1_vs_p2":
                     log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
