@@ -80,6 +80,8 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 
 ### Tracked Metrics
 
+**round** = serve → score (1 point), **game** = first to winning_score (multiple rounds)
+
 #### Baseline Evaluation (`eval/vs_{opp}/`)
 
 Model is always evaluated on its **training side** (`--side`).

@@ -21,7 +21,7 @@ from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
-from training_center.eval.match import Player, play_game
+from training_center.eval.game import Player, play_game
 from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy
 from training_center.metadata import get_experiment_metadata
 
@@ -115,7 +115,7 @@ def _summarize(
     all_stats: list,
     perspective: str,
 ) -> dict:
-    """Aggregate match statistics."""
+    """Aggregate statistics over multiple games."""
     model_side = "player_1" if perspective == "p1" else "player_2"
     model_serve = [r for r in rounds if r.server == model_side]
     opp_serve = [r for r in rounds if r.server != model_side]

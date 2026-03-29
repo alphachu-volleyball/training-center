@@ -6,7 +6,7 @@ from itertools import combinations
 
 import numpy as np
 
-from training_center.eval.match import Player, make_player, play_game
+from training_center.eval.game import Player, make_player, play_game
 
 INITIAL_ELO = 1500
 K_FACTOR = 32

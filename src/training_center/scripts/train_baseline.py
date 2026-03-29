@@ -18,7 +18,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.env_factory import make_vec_env
 from training_center.eval.elo import INITIAL_ELO, update_elo
-from training_center.eval.match import Player, play_game
+from training_center.eval.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
 
 
