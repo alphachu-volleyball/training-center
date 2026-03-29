@@ -1,6 +1,6 @@
 """Tests for PFSP opponent pool."""
 
-from training_center.eval.opponent_pool import OpponentPool
+from training_center.opponent_pool import OpponentPool
 
 
 def test_empty_pool_win_rate():

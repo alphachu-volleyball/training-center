@@ -1,6 +1,6 @@
 """Tests for ELO rating calculation."""
 
-from training_center.eval.elo import INITIAL_ELO, update_elo
+from training_center.elo import INITIAL_ELO, update_elo
 
 
 def test_update_elo_a_wins():

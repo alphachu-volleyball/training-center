@@ -21,9 +21,9 @@ from pika_zoo.ai import BuiltinAI
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
-from training_center.eval.game import Player, play_game
-from training_center.eval.opponent_pool import OpponentPool, make_opponent_policy
+from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
+from training_center.opponent_pool import OpponentPool, make_opponent_policy
 
 
 def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:

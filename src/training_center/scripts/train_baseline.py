@@ -16,9 +16,9 @@ from pika_zoo.ai import BuiltinAI, RandomAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
+from training_center.elo import INITIAL_ELO, update_elo
 from training_center.env_factory import make_vec_env
-from training_center.eval.elo import INITIAL_ELO, update_elo
-from training_center.eval.game import Player, play_game
+from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
 
 
