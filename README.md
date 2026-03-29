@@ -31,6 +31,8 @@ graph LR
     end
 
     ENV -->|train| TRAIN
+    TRAIN -->|metrics · models · videos| WB["📈 W&B"]
+    EVAL -->|stats| WB
     EXPORT -->|deploy| WT["🌐 world-tournament"]
 ```
 
@@ -70,7 +72,7 @@ uv run wandb login
 
 # Runs are logged to --wandb-entity / --wandb-project (defaults: ootzk / alphachu-volleyball)
 # To log to your own workspace:
-uv run train-baseline --wandb-entity your-username --wandb-project your-project ...
+uv run train-baseline --wandb-entity your-entity --wandb-project your-project ...
 
 # Optionally name your run:
 uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
