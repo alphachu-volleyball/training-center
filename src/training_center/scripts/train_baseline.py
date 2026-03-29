@@ -98,9 +98,7 @@ class EvalCallback(BaseCallback):
                 durations = [r.duration for r in all_rounds]
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
-                log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean(
-                    [e.scores[model_idx] for e in all_episodes]
-                ))
+                log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean([e.scores[model_idx] for e in all_episodes]))
                 log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
                 if model_serve:
                     log_data[f"eval/vs_{opp_name}/serve_win_rate"] = sum(
