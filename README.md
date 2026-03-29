@@ -83,7 +83,7 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 **round** = serve → score (1 point), **game** = first to winning_score (multiple rounds)
 
 > [!IMPORTANT]
-> All models are evaluated on their **training side**. Observations use absolute coordinates, so a model trained as player_2 cannot be evaluated as player_1 (domain shift). The evaluate script takes separate `--p1`/`--p2` pools to ensure correct placement.
+> All models are evaluated on their **training side**. `SimplifyObservation` mirrors player_2's x-axis so both sides see a left-side perspective, but the underlying physics engine has [intentional left-right asymmetries](https://github.com/alphachu-volleyball/pika-zoo#physics-engine-left-right-asymmetry) that make cross-side transfer imperfect. The evaluate script takes separate `--p1`/`--p2` pools to ensure correct placement.
 
 #### Baseline Evaluation (`eval/vs_{opp}/`)
 

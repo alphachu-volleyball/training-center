@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, RandomAI
+from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -46,13 +47,20 @@ class EvalCallback(BaseCallback):
     """Periodically evaluate with detailed stats, save checkpoints, and log to wandb."""
 
     def __init__(
-        self, eval_freq: int, save_path: Path, side: str = "player_1", eval_games: int = 20, verbose: int = 1
+        self,
+        eval_freq: int,
+        save_path: Path,
+        side: str = "player_1",
+        eval_games: int = 20,
+        simplify_observation: bool = False,
+        verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
         self.eval_freq = eval_freq
         self.save_path = save_path
         self.side = side
         self.eval_games = eval_games
+        self.simplify_observation = simplify_observation
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
@@ -65,7 +73,7 @@ class EvalCallback(BaseCallback):
             wandb.run.log_artifact(artifact)
 
             # Evaluate against each opponent (place model on its training side)
-            model_player = Player("model", "model", model=self.model)
+            model_player = Player("model", model=self.model)
             model_side = self.side
             opp_side = "player_2" if model_side == "player_1" else "player_1"
             elo = INITIAL_ELO
@@ -73,7 +81,7 @@ class EvalCallback(BaseCallback):
             rng = np.random.default_rng()
 
             for opp_name in ["random", "builtin"]:
-                opp = Player(opp_name, opp_name)
+                opp = Player(opp_name, policy=BuiltinAI() if opp_name == "builtin" else RandomAI())
                 opp_elo = INITIAL_ELO
                 wins = 0
                 all_rounds = []
@@ -82,9 +90,21 @@ class EvalCallback(BaseCallback):
                 for _ in range(self.eval_games):
                     seed = int(rng.integers(0, 2**31))
                     if model_side == "player_1":
-                        episode = play_game(model_player, opp, winning_score=5, seed=seed)
+                        episode = play_game(
+                            model_player,
+                            opp,
+                            winning_score=5,
+                            seed=seed,
+                            simplify_observation=self.simplify_observation,
+                        )
                     else:
-                        episode = play_game(opp, model_player, winning_score=5, seed=seed)
+                        episode = play_game(
+                            opp,
+                            model_player,
+                            winning_score=5,
+                            seed=seed,
+                            simplify_observation=self.simplify_observation,
+                        )
                     result = 1 if episode.winner == model_side else 0
                     wins += result
                     elo, opp_elo = update_elo(elo, opp_elo, result)
@@ -128,7 +148,10 @@ def main() -> None:
     parser.add_argument("--save-path", required=True, help="Path to save the trained model")
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--noisy", action="store_true", help="Add random perturbation to ball initial state")
+    parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
+    parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
+    parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
+    parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument("--opponent", default="random", choices=["random", "builtin"])
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
@@ -141,6 +164,14 @@ def main() -> None:
     save_path = Path(args.save_path)
     meta = get_experiment_metadata()
 
+    noise = None
+    if args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
+        noise = NoiseConfig(
+            x_range=args.noise_x or 0,
+            x_velocity_range=args.noise_x_vel or 0,
+            y_velocity_range=args.noise_y_vel or 0,
+        )
+
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
@@ -152,7 +183,8 @@ def main() -> None:
             "side": args.side,
             "opponent": args.opponent,
             "seed": args.seed,
-            "noisy": args.noisy,
+            "noise": str(noise) if noise else None,
+            "simplify_observation": args.simplify_observation,
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
             **meta,
@@ -167,7 +199,8 @@ def main() -> None:
         opponent_policy=opponent_policy,
         use_subproc=True,
         seed=args.seed,
-        noisy=args.noisy,
+        simplify_observation=args.simplify_observation,
+        noise=noise,
     )
 
     if args.init_model:
@@ -184,6 +217,7 @@ def main() -> None:
                 eval_freq=args.eval_freq // args.num_envs,
                 save_path=save_path,
                 side=args.side,
+                simplify_observation=args.simplify_observation,
             )
         )
 

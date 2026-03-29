@@ -7,11 +7,12 @@ from typing import Any
 
 import numpy as np
 from pika_zoo.ai.protocol import AIPolicy
-from pika_zoo.env.pikachu_volleyball import PikachuVolleyballEnv
+from pika_zoo.env.pikachu_volleyball import NoiseConfig, PikachuVolleyballEnv
 from pika_zoo.wrappers.convert_single_agent import ConvertSingleAgent
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
 from pika_zoo.wrappers.reward_shaping import RewardShaping
 from pika_zoo.wrappers.simplify_action import SimplifyAction
+from pika_zoo.wrappers.simplify_observation import SimplifyObservation
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 
@@ -20,23 +21,28 @@ def make_env(
     opponent_policy: AIPolicy | Callable[[np.ndarray], int] | None = None,
     winning_score: int = 15,
     serve: str = "winner",
+    simplify_observation: bool = False,
     reward_shaping: bool = False,
     ball_position_coeff: float = 0.01,
     normal_state_coeff: float = 0.0,
-    noisy: bool = False,
+    noise: NoiseConfig | None = None,
     seed: int | None = None,
 ) -> ConvertSingleAgent:
     """Build the full wrapper chain and return a gym.Env for SB3.
 
-    Chain: PikachuVolleyballEnv → RewardShaping → SimplifyAction → NormalizeObservation → ConvertSingleAgent
+    Chain: PikachuVolleyballEnv → SimplifyAction → [SimplifyObservation]
+           → NormalizeObservation → [RewardShaping] → ConvertSingleAgent
     """
-    env = PikachuVolleyballEnv(winning_score=winning_score, serve=serve, noisy=noisy)
+    env = PikachuVolleyballEnv(winning_score=winning_score, serve=serve, noise=noise)
+
+    env = SimplifyAction(env)
+    if simplify_observation:
+        env = SimplifyObservation(env)
+    env = NormalizeObservation(env)
 
     if reward_shaping:
         env = RewardShaping(env, ball_position_coeff=ball_position_coeff, normal_state_coeff=normal_state_coeff)
 
-    env = SimplifyAction(env)
-    env = NormalizeObservation(env)
     gym_env = ConvertSingleAgent(env, agent=agent, opponent_policy=opponent_policy)
 
     if seed is not None:

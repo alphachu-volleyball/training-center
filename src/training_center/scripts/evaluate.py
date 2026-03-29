@@ -25,6 +25,9 @@ def main() -> None:
     parser.add_argument("--p2", required=True, help="Comma-separated p2 players: random, builtin, or model path")
     parser.add_argument("--games", type=int, default=100, help="Games per pair")
     parser.add_argument("--score", type=int, default=15, help="Winning score")
+    parser.add_argument(
+        "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
@@ -35,8 +38,12 @@ def main() -> None:
 
     p1_specs = [s.strip() for s in args.p1.split(",")]
     p2_specs = [s.strip() for s in args.p2.split(",")]
-    p1_players = [make_player(spec) for spec in p1_specs]
-    p2_players = [make_player(spec) for spec in p2_specs]
+    p1_players = [
+        make_player(spec, agent="player_1", simplify_observation=args.simplify_observation) for spec in p1_specs
+    ]
+    p2_players = [
+        make_player(spec, agent="player_2", simplify_observation=args.simplify_observation) for spec in p2_specs
+    ]
     rng = np.random.default_rng(args.seed)
 
     run = wandb.init(
