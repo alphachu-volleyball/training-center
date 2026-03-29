@@ -87,7 +87,7 @@ class EvalCallback(BaseCallback):
                 durations = [r.duration for r in all_rounds]
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
-                log_data[f"eval/vs_{opp_name}/avg_rally"] = float(np.mean(durations)) if durations else 0
+                log_data[f"eval/vs_{opp_name}/avg_round_frames"] = float(np.mean(durations)) if durations else 0
                 if p1_serve:
                     log_data[f"eval/vs_{opp_name}/p1_serve_win"] = sum(
                         1 for r in p1_serve if r.scorer == "player_1"

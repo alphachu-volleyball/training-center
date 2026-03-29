@@ -89,8 +89,8 @@ def main() -> None:
                 f"{matchup_key}/avg_p2_score": float(avg_p2_score),
                 f"{matchup_key}/p1_serve_win_rate": p1s_p1w / max(len(p1_serve), 1),
                 f"{matchup_key}/p2_serve_win_rate": p2s_p2w / max(len(p2_serve), 1),
-                f"{matchup_key}/avg_rally": float(np.mean(durations)) if durations else 0,
-                f"{matchup_key}/median_rally": float(np.median(durations)) if durations else 0,
+                f"{matchup_key}/avg_round_frames": float(np.mean(durations)) if durations else 0,
+                f"{matchup_key}/median_round_frames": float(np.median(durations)) if durations else 0,
             }
         )
 
@@ -116,7 +116,7 @@ def main() -> None:
             )
 
         print(
-            f"\n  Rally: mean {np.mean(durations):.0f}"
+            f"\n  Round frames: mean {np.mean(durations):.0f}"
             f"  median {np.median(durations):.0f}"
             f"  range {np.min(durations)}-{np.max(durations)}"
         )

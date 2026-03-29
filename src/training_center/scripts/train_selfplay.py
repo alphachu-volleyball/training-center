@@ -135,7 +135,7 @@ def _summarize(
         "avg_opp_score": avg_opp_score,
         "p1_serve_win": sum(1 for r in p1_serve if r.scorer == "player_1") / max(len(p1_serve), 1),
         "p2_serve_win": sum(1 for r in p2_serve if r.scorer == "player_2") / max(len(p2_serve), 1),
-        "avg_rally": float(np.mean(durations)) if durations else 0,
+        "avg_round_frames": float(np.mean(durations)) if durations else 0,
     }
 
 
@@ -363,7 +363,7 @@ def main() -> None:
                     f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
                     f"  score: {s['avg_score']:.1f}-{s['avg_opp_score']:.1f}"
                     f"  serve: p1={s['p1_serve_win'] * 100:.0f}% p2={s['p2_serve_win'] * 100:.0f}%"
-                    f"  rally: {s['avg_rally']:.0f}",
+                    f"  round: {s['avg_round_frames']:.0f}f",
                     flush=True,
                 )
 
@@ -371,18 +371,18 @@ def main() -> None:
                     opponent = match[len("p1_vs_") :]
                     log_data[f"p1/eval/vs_{opponent}_winrate"] = s["win_rate"]
                     log_data[f"p1/eval/vs_{opponent}_avg_score"] = s["avg_score"]
-                    log_data[f"p1/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
+                    log_data[f"p1/eval/vs_{opponent}_avg_round_frames"] = s["avg_round_frames"]
 
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
                     log_data[f"p2/eval/vs_{opponent}_winrate"] = s["win_rate"]
                     log_data[f"p2/eval/vs_{opponent}_avg_score"] = s["avg_score"]
-                    log_data[f"p2/eval/vs_{opponent}_avg_rally"] = s["avg_rally"]
+                    log_data[f"p2/eval/vs_{opponent}_avg_round_frames"] = s["avg_round_frames"]
 
                 if match == "p1_vs_p2":
                     log_data["p2/eval/vs_p1_winrate"] = 1.0 - s["win_rate"]
                     log_data["p2/eval/vs_p1_avg_score"] = s["avg_opp_score"]
-                    log_data["p2/eval/vs_p1_avg_rally"] = s["avg_rally"]
+                    log_data["p2/eval/vs_p1_avg_round_frames"] = s["avg_round_frames"]
 
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(

@@ -131,7 +131,7 @@ def analyze_games(
 
     if durations:
         print(
-            f"\nRally length: mean {np.mean(durations):.1f}, "
+            f"\nRound frames: mean {np.mean(durations):.1f}, "
             f"median {np.median(durations):.1f}, "
             f"range {np.min(durations)}-{np.max(durations)}"
         )
