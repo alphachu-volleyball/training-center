@@ -54,13 +54,13 @@ def evaluate_model(
     seed: int | None = None,
 ) -> tuple[dict[str, tuple[int, int]], float]:
     """Evaluate a single model against multiple opponents. Returns (results, model_elo)."""
-    model_player = make_player(model_path)
+    model_player = make_player(model_path, agent="player_1")
     rng = np.random.default_rng(seed)
     elos: dict[str, float] = {model_player.name: INITIAL_ELO}
 
     results: dict[str, tuple[int, int]] = {}
     for opp_spec in opponents:
-        opp = make_player(opp_spec)
+        opp = make_player(opp_spec, agent="player_2")
         elos.setdefault(opp.name, INITIAL_ELO)
 
         wins = 0

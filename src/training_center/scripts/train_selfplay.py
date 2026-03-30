@@ -17,12 +17,15 @@ from pathlib import Path
 
 import numpy as np
 import wandb
-from pika_zoo.ai import BuiltinAI
+from pika_zoo.ai import BuiltinAI, RandomAI
+from pika_zoo.env.pikachu_volleyball import NoiseConfig
+from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.game import Player, play_game
 from training_center.metadata import get_experiment_metadata
+from training_center.metrics import compute_eval_metrics
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
 
 
@@ -56,13 +59,14 @@ def evaluate_selfplay_detailed(
     games: int = 20,
     winning_score: int = 15,
     seed: int = 42,
+    simplify_observation: bool = False,
 ) -> dict[str, dict]:
     """Evaluate with detailed stats across 5 matchups."""
     rng = np.random.default_rng(seed)
-    p1 = Player("p1", "model", model=p1_model)
-    p2 = Player("p2", "model", model=p2_model)
-    random_p = Player("random", "random")
-    builtin_p = Player("builtin", "builtin")
+    p1 = Player("p1", model=p1_model)
+    p2 = Player("p2", model=p2_model)
+    random_p = Player("random", policy=RandomAI())
+    builtin_p = Player("builtin", policy=BuiltinAI())
 
     matchups: dict[str, dict] = {}
     for name, p1_player, p2_player, perspective in [
@@ -73,7 +77,9 @@ def evaluate_selfplay_detailed(
         ("p2_vs_builtin", builtin_p, p2, "p2"),
     ]:
         matchup_seed = int(rng.integers(0, 2**31))
-        name, summary = _run_matchup(name, p1_player, p2_player, games, winning_score, perspective, matchup_seed)
+        name, summary = _run_matchup(
+            name, p1_player, p2_player, games, winning_score, perspective, matchup_seed, simplify_observation
+        )
         matchups[name] = summary
 
     return matchups
@@ -87,6 +93,7 @@ def _run_matchup(
     winning_score: int,
     perspective: str,
     seed: int,
+    simplify_observation: bool = False,
 ) -> tuple[str, dict]:
     """Run a single matchup evaluation."""
     rng = np.random.default_rng(seed)
@@ -96,7 +103,14 @@ def _run_matchup(
 
     for _i in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        episode = play_game(p1_player, p2_player, winning_score=winning_score, seed=game_seed)
+        episode = play_game(
+            p1_player,
+            p2_player,
+            winning_score=winning_score,
+            seed=game_seed,
+            simplify_observation=simplify_observation,
+            record_frames=True,
+        )
         all_stats.append(episode)
         if perspective == "p1":
             wins += 1 if episode.winner == "player_1" else 0
@@ -119,7 +133,6 @@ def _summarize(
     model_side = "player_1" if perspective == "p1" else "player_2"
     model_serve = [r for r in rounds if r.server == model_side]
     opp_serve = [r for r in rounds if r.server != model_side]
-    durations = [r.duration for r in rounds]
 
     if perspective == "p1":
         avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
@@ -127,6 +140,8 @@ def _summarize(
     else:
         avg_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
         avg_opp_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
+
+    detail = compute_eval_metrics(GamesRecord(games=all_stats), model_side)
 
     return {
         "wins": wins,
@@ -136,7 +151,7 @@ def _summarize(
         "avg_opp_score": avg_opp_score,
         "serve_win_rate": sum(1 for r in model_serve if r.scorer == model_side) / max(len(model_serve), 1),
         "receive_win_rate": sum(1 for r in opp_serve if r.scorer == model_side) / max(len(opp_serve), 1),
-        "avg_round_frames": float(np.mean(durations)) if durations else 0,
+        **detail,
     }
 
 
@@ -147,12 +162,13 @@ def _update_pool_stats(
     games: int = 10,
     winning_score: int = 15,
     max_eval: int = 20,
+    simplify_observation: bool = False,
 ) -> dict | None:
     """Play current model vs pool checkpoints to update PFSP win-rates."""
     if not pool.checkpoints:
         return None
 
-    current_player = Player(side, "model", model=model)
+    current_player = Player(side, model=model)
 
     checkpoints = list(pool.checkpoints)
     if len(checkpoints) > max_eval:
@@ -168,16 +184,28 @@ def _update_pool_stats(
     for path in checkpoints:
         name = Path(path).name
         opp_model = PPO.load(path, device="cpu")
-        opp_player = Player(name, "model", model=opp_model)
+        opp_player = Player(name, model=opp_model)
 
         wins = 0
         for _ in range(games):
             game_seed = int(rng.integers(0, 2**31))
             if side == "p1":
-                stats = play_game(current_player, opp_player, winning_score=winning_score, seed=game_seed)
+                stats = play_game(
+                    current_player,
+                    opp_player,
+                    winning_score=winning_score,
+                    seed=game_seed,
+                    simplify_observation=simplify_observation,
+                )
                 won = stats.winner == "player_1"
             else:
-                stats = play_game(opp_player, current_player, winning_score=winning_score, seed=game_seed)
+                stats = play_game(
+                    opp_player,
+                    current_player,
+                    winning_score=winning_score,
+                    seed=game_seed,
+                    simplify_observation=simplify_observation,
+                )
                 won = stats.winner == "player_2"
             pool.update_stats(name, won)
             if won:
@@ -201,7 +229,10 @@ def main() -> None:
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--noisy", action="store_true", help="Add random perturbation to ball initial state")
+    parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
+    parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
+    parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
+    parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument("--builtin-prob", type=float, default=0.6)
     parser.add_argument("--curriculum", default=None, help="Path to curriculum JSON file")
     parser.add_argument("--adaptive", default=None, help="Path to adaptive curriculum JSON file")
@@ -222,6 +253,14 @@ def main() -> None:
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
+    noise = None
+    if args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
+        noise = NoiseConfig(
+            x_range=args.noise_x or 0,
+            x_velocity_range=args.noise_x_vel or 0,
+            y_velocity_range=args.noise_y_vel or 0,
+        )
+
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
@@ -235,7 +274,10 @@ def main() -> None:
             "builtin_prob": args.builtin_prob,
             "ent_coef": args.ent_coef,
             "eval_freq": args.eval_freq,
-            "noisy": args.noisy,
+            "noise_x": noise.x_range if noise else None,
+            "noise_x_vel": noise.x_velocity_range if noise else None,
+            "noise_y_vel": noise.y_velocity_range if noise else None,
+            "simplify_observation": args.simplify_observation,
             "eval_games": args.eval_games,
             "save_dir": args.save_dir,
             **meta,
@@ -301,9 +343,21 @@ def main() -> None:
         return args.builtin_prob, 1.0 - args.builtin_prob
 
     # Create envs (DummyVecEnv for opponent policy swapping)
-    p1_envs = make_vec_env(n_envs=args.num_envs, agent="player_1", use_subproc=False, seed=args.seed, noisy=args.noisy)
+    p1_envs = make_vec_env(
+        n_envs=args.num_envs,
+        agent="player_1",
+        use_subproc=False,
+        seed=args.seed,
+        simplify_observation=args.simplify_observation,
+        noise=noise,
+    )
     p2_envs = make_vec_env(
-        n_envs=args.num_envs, agent="player_2", use_subproc=False, seed=args.seed + 100, noisy=args.noisy
+        n_envs=args.num_envs,
+        agent="player_2",
+        use_subproc=False,
+        seed=args.seed + 100,
+        simplify_observation=args.simplify_observation,
+        noise=noise,
     )
 
     # Initialize models
@@ -353,7 +407,11 @@ def main() -> None:
             _log_model_artifact(run, "p1-latest", p1_latest)
             _log_model_artifact(run, "p2-latest", p2_latest)
             matchups = evaluate_selfplay_detailed(
-                p1_model, p2_model, games=args.eval_games, winning_score=args.eval_score
+                p1_model,
+                p2_model,
+                games=args.eval_games,
+                winning_score=args.eval_score,
+                simplify_observation=args.simplify_observation,
             )
 
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
@@ -368,21 +426,31 @@ def main() -> None:
                     flush=True,
                 )
 
+                metric_keys = [
+                    "win_rate",
+                    "avg_score",
+                    "serve_win_rate",
+                    "receive_win_rate",
+                    "avg_round_frames",
+                    "std_round_frames",
+                    "action_entropy",
+                    "power_hit_rate",
+                    "ball_own_side_ratio",
+                    "serve_avg_round_frames",
+                    "receive_avg_round_frames",
+                ]
+
                 if match.startswith("p1_vs_"):
                     opponent = match[len("p1_vs_") :]
-                    log_data[f"p1/eval/vs_{opponent}/win_rate"] = s["win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/avg_score"] = s["avg_score"]
-                    log_data[f"p1/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
-                    log_data[f"p1/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
+                    for k in metric_keys:
+                        if k in s:
+                            log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
 
                 if match.startswith("p2_vs_"):
                     opponent = match[len("p2_vs_") :]
-                    log_data[f"p2/eval/vs_{opponent}/win_rate"] = s["win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/avg_score"] = s["avg_score"]
-                    log_data[f"p2/eval/vs_{opponent}/serve_win_rate"] = s["serve_win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/receive_win_rate"] = s["receive_win_rate"]
-                    log_data[f"p2/eval/vs_{opponent}/avg_round_frames"] = s["avg_round_frames"]
+                    for k in metric_keys:
+                        if k in s:
+                            log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
 
                 if match == "p1_vs_p2":
                     log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
@@ -397,6 +465,7 @@ def main() -> None:
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
+                simplify_observation=args.simplify_observation,
             )
             p2_pfsp = _update_pool_stats(
                 p2_model,
@@ -405,6 +474,7 @@ def main() -> None:
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
+                simplify_observation=args.simplify_observation,
             )
             if p1_pfsp:
                 log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]

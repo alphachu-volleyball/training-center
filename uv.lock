@@ -1352,8 +1352,8 @@ wheels = [
 
 [[package]]
 name = "pika-zoo"
-version = "1.2.1"
-source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.2.1#7bc2be7b5108920f89365f92e45d83edf24bfe7a" }
+version = "1.3.0"
+source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.3.0#865c65fe2ed84e1024dde999de8f4a4fc3f8e1c3" }
 dependencies = [
     { name = "gymnasium" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2025,8 +2025,8 @@ rendering = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.2.1" },
-    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.2.1" },
+    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.3.0" },
+    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "stable-baselines3", specifier = ">=2.4.0" },

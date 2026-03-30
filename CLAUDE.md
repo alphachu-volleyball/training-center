@@ -33,6 +33,7 @@ src/training_center/
 ├── env_factory.py              # Wrapper chain construction + opponent policy swap
 ├── game.py                     # Player, play_game, make_player
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
+├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
 └── scripts/
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
@@ -52,9 +53,10 @@ uv run evaluate               # Round-robin ELO evaluation
 
 ```
 PikachuVolleyballEnv (PettingZoo)
-  → RewardShaping (optional)
   → SimplifyAction (18 → 13 relative actions)
+  → SimplifyObservation (mirror player_2 x-axis, optional)
   → NormalizeObservation ([0, 1])
+  → RewardShaping (optional)
   → ConvertSingleAgent (gym.Env for SB3)
 ```
 
@@ -86,7 +88,7 @@ uv run pytest            # Test
 ```toml
 [project]
 dependencies = [
-  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.1.0",
+  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.3.0",
 ]
 ```
 
