@@ -220,8 +220,62 @@ This enables Claude Code to inspect experiment results, compare runs, and downlo
 - All models are also uploaded as W&B Artifacts
 - Deployed models are exported as ONNX and attached to GitHub Releases
 
+### experiments/ Directory
+
+`experiments/` is a **symlink to a cloud-synced folder** (Dropbox, Google Drive, OneDrive, etc.) for cross-machine sync. Each machine creates the symlink to its local sync path:
+
+```bash
+ln -s <cloud-sync-path>/alphachu-volleyball/experiments experiments
+```
+
+> [!NOTE]
+> The symlink itself is gitignored.
+
+## Experiment Conventions
+
+> [!NOTE]
+> Contents vary per experiment — no fixed structure.
+
+### Naming
+
+- Single experiments: `NNN_description` (e.g., `001_baseline_p1_vs_builtin_normal`)
+- Sweeps: `sweep_NNN_description` (e.g., `sweep_001_noise_level`)
+
+### Sweep Execution
+
+```bash
+# Always specify project and entity explicitly
+uv run wandb sweep --project alphachu-volleyball --entity ootzk experiments/sweep_NNN/sweep.yaml
+uv run wandb agent ootzk/alphachu-volleyball/<SWEEP_ID>
+```
+
+sweep.yaml command pattern:
+
+```yaml
+command:
+  - ${env}
+  - uv
+  - run
+  - python          # or: train-baseline (for CLI entry points)
+  - ${program}
+  - ${args}
+```
+
+### Lessons Learned
+
+**Cross-evaluation of saved models**: Load models via `PPO.load()` and run games directly through the wrapper chain. Do NOT use `make_player()` with model paths — see Known Issues.
+
+**Sweep resume pattern**: To resume training from a checkpoint, use `--init-model` and `--resume-steps`. If the sweep needs extra logic (e.g., constructing init-model path from a parameter), add a `run.py` wrapper that parses sweep args and shells out to the CLI.
+
+**W&B Table logging**: For evaluation sweeps (non-timeseries), log results as `wandb.Table` and set `run.summary` for sweep-level comparison. Do not use `run.log()` for single-step results as it creates unnecessary timeseries.
+
+### Known Issues
+
+- **SB3ModelPolicy NOOP bug** (pika-zoo#48): `make_player(model_path)` creates a `Player(policy=SB3ModelPolicy(...))` that silently returns NOOP when used in `play_game()`. The env never calls `set_observation()`. Use in-memory models (`Player(model=PPO.load(path))`) instead. Training eval (EvalCallback) is unaffected — it already uses in-memory models.
+- **action_entropy range**: README states `0–log₂13` but RandomAI operates in the raw 18-action space, so actual max is `log₂18 ≈ 4.17`.
+
 ## Hardware Notes
 
-- AMD Ryzen 7 3700X (8C/16T), NVIDIA RTX 2080 Super (8GB)
+- Training may run across multiple machines — `experiments/` is synced via cloud storage
 - Low-dimensional vector obs + MLP policy → CPU (env parallelization) is the bottleneck
 - SB3 `SubprocVecEnv` with 8-16 parallel environments
