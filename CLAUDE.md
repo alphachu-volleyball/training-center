@@ -88,7 +88,7 @@ uv run pytest            # Test
 ```toml
 [project]
 dependencies = [
-  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.3.0",
+  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.3.1",
 ]
 ```
 
@@ -263,15 +263,9 @@ command:
 
 ### Lessons Learned
 
-**Cross-evaluation of saved models**: Load models via `PPO.load()` and run games directly through the wrapper chain. Do NOT use `make_player()` with model paths — see Known Issues.
-
 **Sweep resume pattern**: To resume training from a checkpoint, use `--init-model` and `--resume-steps`. If the sweep needs extra logic (e.g., constructing init-model path from a parameter), add a `run.py` wrapper that parses sweep args and shells out to the CLI.
 
 **W&B Table logging**: For evaluation sweeps (non-timeseries), log results as `wandb.Table` and set `run.summary` for sweep-level comparison. Do not use `run.log()` for single-step results as it creates unnecessary timeseries.
-
-### Known Issues
-
-- **SB3ModelPolicy NOOP bug** (pika-zoo#48): `make_player(model_path)` creates a `Player(policy=SB3ModelPolicy(...))` that silently returns NOOP when used in `play_game()`. The env never calls `set_observation()`. Use in-memory models (`Player(model=PPO.load(path))`) instead. Training eval (EvalCallback) is unaffected — it already uses in-memory models.
 - **action_entropy range**: README states `0–log₂13` but RandomAI operates in the raw 18-action space, so actual max is `log₂18 ≈ 4.17`.
 
 ## Hardware Notes
