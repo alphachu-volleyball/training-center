@@ -44,3 +44,8 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.lint.isort]
 known-first-party = ["training_center"]
 known-third-party = ["wandb"]
+
+[dependency-groups]
+dev = [
+    "plotly>=6.6.0",
+]
