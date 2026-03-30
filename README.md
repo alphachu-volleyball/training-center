@@ -98,7 +98,7 @@ Model is always evaluated on its **training side** (`--side`).
 | `eval/vs_{opp}/receive_win_rate` | 0–1 | Scoring rate when opponent serves |
 | `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
 | `eval/vs_{opp}/std_round_frames` | ≥ 0 | Std of round duration (low = repetitive pattern) |
-| `eval/vs_{opp}/action_entropy` | 0–log₂13 | Shannon entropy of action distribution |
+| `eval/vs_{opp}/action_entropy` | 0–log₂18 | Shannon entropy of action distribution |
 | `eval/vs_{opp}/power_hit_rate` | 0–1 | Power hits / ball touches |
 | `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
 | `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
