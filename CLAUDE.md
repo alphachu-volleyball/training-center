@@ -167,6 +167,50 @@ This links each experiment to its exact code version. No per-experiment tags nee
 | Experiment → code version | commit hash in W&B metadata |
 | Deployed model | GitHub Release + W&B run link |
 
+## W&B MCP Server
+
+Claude Code can query W&B experiment data (runs, metrics, sweeps, artifacts) via the [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server).
+
+### Setup
+
+Create `.mcp.json` in the project root (already in `.gitignore`):
+
+```json
+{
+  "mcpServers": {
+    "wandb": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/wandb/wandb-mcp-server.git",
+        "wandb_mcp_server"
+      ],
+      "env": {
+        "WANDB_API_KEY": "<your-api-key>"
+      }
+    }
+  }
+}
+```
+
+Get your API key from https://wandb.ai/authorize.
+
+### Usage
+
+The MCP server exposes GraphQL queries against the W&B API. Example:
+
+```graphql
+query {
+  project(name: "alphachu-volleyball", entityName: "ootzk") {
+    runs(first: 5) {
+      edges { node { name displayName config summaryMetrics } }
+    }
+  }
+}
+```
+
+This enables Claude Code to inspect experiment results, compare runs, and download artifacts without leaving the conversation.
+
 ## Artifact Management
 
 ### Model Files
