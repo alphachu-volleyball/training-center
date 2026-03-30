@@ -98,7 +98,7 @@ Model is always evaluated on its **training side** (`--side`).
 | `eval/vs_{opp}/receive_win_rate` | 0–1 | Scoring rate when opponent serves |
 | `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
 | `eval/vs_{opp}/std_round_frames` | ≥ 0 | Std of round duration (low = repetitive pattern) |
-| `eval/vs_{opp}/action_entropy` | 0–log₂13 | Shannon entropy of action distribution |
+| `eval/vs_{opp}/action_entropy` | 0–log₂18 | Shannon entropy of action distribution |
 | `eval/vs_{opp}/power_hit_rate` | 0–1 | Power hits / ball touches |
 | `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
 | `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
@@ -166,11 +166,18 @@ Claude Code can query W&B experiment data directly via the [wandb-mcp-server](ht
 }
 ```
 
-Get your API key from https://wandb.ai/authorize. See [CLAUDE.md](CLAUDE.md#wb-mcp-server) for usage details.
+Get your API key from https://wandb.ai/authorize.
+
+## Experiment Tips: Cross-machine sync
+
+`experiments/` can be a symlink to a cloud-synced folder (Dropbox, Google Drive, etc.) for sharing experiment data across machines. See [CLAUDE.md](CLAUDE.md#experiments-directory) for setup.
+
+> [!NOTE]
+> `experiments/` is gitignored because it contains large model files, temporary outputs, and ad-hoc scripts that change frequently during experimentation.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the full development guide.
+See [CLAUDE.md](CLAUDE.md) for the full development guide, including experiment conventions and lessons learned.
 
 ### Branch Workflow
 
