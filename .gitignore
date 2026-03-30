@@ -20,3 +20,6 @@ experiments/
 
 # Experiment logs
 wandb/
+
+# MCP config (contains API keys)
+.mcp.json
