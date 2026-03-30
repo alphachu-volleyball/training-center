@@ -154,6 +154,7 @@ def main() -> None:
     parser.add_argument("--save-path", required=True, help="Path to save the trained model")
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--noise-level", type=int, default=None, choices=[1, 2, 3, 4, 5], help="Noise preset level")
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
@@ -170,14 +171,7 @@ def main() -> None:
     save_path = Path(args.save_path)
     meta = get_experiment_metadata()
 
-    noise = None
-    if args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
-        noise = NoiseConfig(
-            x_range=args.noise_x or 0,
-            x_velocity_range=args.noise_x_vel or 0,
-            y_velocity_range=args.noise_y_vel or 0,
-        )
-
+    # wandb.init with argparse defaults — sweep agent overrides these via wandb.config
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
@@ -189,9 +183,10 @@ def main() -> None:
             "side": args.side,
             "opponent": args.opponent,
             "seed": args.seed,
-            "noise_x": noise.x_range if noise else None,
-            "noise_x_vel": noise.x_velocity_range if noise else None,
-            "noise_y_vel": noise.y_velocity_range if noise else None,
+            "noise_level": args.noise_level,
+            "noise_x": args.noise_x,
+            "noise_x_vel": args.noise_x_vel,
+            "noise_y_vel": args.noise_y_vel,
             "simplify_observation": args.simplify_observation,
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
@@ -199,37 +194,59 @@ def main() -> None:
         },
     )
 
-    opponent_policy = BuiltinAI() if args.opponent == "builtin" else RandomAI()
+    # Read from wandb.config so sweep overrides take effect
+    c = wandb.config
+
+    NOISE_LEVELS = {
+        1: (5, 3, 1),
+        2: (10, 5, 2),
+        3: (20, 10, 3),
+        4: (35, 15, 4),
+        5: (50, 20, 5),
+    }
+
+    noise = None
+    if c.noise_level is not None:
+        x, xv, yv = NOISE_LEVELS[c.noise_level]
+        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
+    elif c.noise_x is not None or c.noise_x_vel is not None or c.noise_y_vel is not None:
+        noise = NoiseConfig(
+            x_range=c.noise_x or 0,
+            x_velocity_range=c.noise_x_vel or 0,
+            y_velocity_range=c.noise_y_vel or 0,
+        )
+
+    opponent_policy = BuiltinAI() if c.opponent == "builtin" else RandomAI()
 
     env = make_vec_env(
-        n_envs=args.num_envs,
-        agent=args.side,
+        n_envs=c.num_envs,
+        agent=c.side,
         opponent_policy=opponent_policy,
         use_subproc=True,
-        seed=args.seed,
-        simplify_observation=args.simplify_observation,
+        seed=c.seed,
+        simplify_observation=c.simplify_observation,
         noise=noise,
     )
 
-    if args.init_model:
-        model = PPO.load(args.init_model, env=env, seed=args.seed, device="cpu", verbose=1)
-        print(f"Resumed from {args.init_model}")
+    if c.init_model:
+        model = PPO.load(c.init_model, env=env, seed=c.seed, device="cpu", verbose=1)
+        print(f"Resumed from {c.init_model}")
     else:
-        model = PPO("MlpPolicy", env, verbose=1, seed=args.seed, device="cpu")
+        model = PPO("MlpPolicy", env, verbose=1, seed=c.seed, device="cpu")
 
     callbacks = [WandbMetricsCallback()]
-    if args.eval_freq > 0:
+    if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         callbacks.append(
             EvalCallback(
-                eval_freq=args.eval_freq // args.num_envs,
+                eval_freq=c.eval_freq // c.num_envs,
                 save_path=save_path,
-                side=args.side,
-                simplify_observation=args.simplify_observation,
+                side=c.side,
+                simplify_observation=c.simplify_observation,
             )
         )
 
-    model.learn(total_timesteps=args.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
+    model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(save_path))
@@ -243,7 +260,7 @@ def main() -> None:
     # Record sample videos
     for opp in ["builtin", "random"]:
         video_path = str(save_path.parent / f"vs_{opp}.mp4")
-        _record_video(model_zip, args.side, opp, video_path)
+        _record_video(model_zip, c.side, opp, video_path)
         run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
     env.close()
