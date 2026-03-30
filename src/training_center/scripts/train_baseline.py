@@ -154,7 +154,9 @@ def main() -> None:
     parser.add_argument("--save-path", required=True, help="Path to save the trained model")
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--noise-level", "--noise_level", type=int, default=None, choices=[1, 2, 3, 4, 5], help="Noise preset level")
+    parser.add_argument(
+        "--noise-level", "--noise_level", type=int, default=None, choices=[1, 2, 3, 4, 5], help="Noise preset level"
+    )
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
