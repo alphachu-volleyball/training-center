@@ -155,7 +155,7 @@ def main() -> None:
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
-        "--noise-level", "--noise_level", type=int, default=None, choices=[1, 2, 3, 4, 5], help="Noise preset level"
+        "--noise-level", "--noise_level", type=int, default=None, choices=[0, 1, 2, 3, 4, 5], help="Noise preset level"
     )
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
@@ -200,6 +200,7 @@ def main() -> None:
     c = wandb.config
 
     NOISE_LEVELS = {
+        0: (0, 0, 0),
         1: (5, 3, 1),
         2: (10, 5, 2),
         3: (20, 10, 3),
@@ -208,7 +209,7 @@ def main() -> None:
     }
 
     noise = None
-    if c.noise_level is not None:
+    if c.noise_level is not None and c.noise_level > 0:
         x, xv, yv = NOISE_LEVELS[c.noise_level]
         noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
     elif c.noise_x is not None or c.noise_x_vel is not None or c.noise_y_vel is not None:
