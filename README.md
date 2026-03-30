@@ -144,6 +144,30 @@ p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
 | `dirty` | Uncommitted changes exist |
 | `pika_zoo_version` | Pinned pika-zoo version |
 
+## W&B MCP Server (Claude Code Integration)
+
+Claude Code can query W&B experiment data directly via the [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server). Create `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "wandb": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/wandb/wandb-mcp-server.git",
+        "wandb_mcp_server"
+      ],
+      "env": {
+        "WANDB_API_KEY": "<your-api-key>"
+      }
+    }
+  }
+}
+```
+
+Get your API key from https://wandb.ai/authorize. See [CLAUDE.md](CLAUDE.md#wb-mcp-server) for usage details.
+
 ## Development
 
 See [CLAUDE.md](CLAUDE.md) for the full development guide.
