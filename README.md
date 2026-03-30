@@ -166,11 +166,18 @@ Claude Code can query W&B experiment data directly via the [wandb-mcp-server](ht
 }
 ```
 
-Get your API key from https://wandb.ai/authorize. See [CLAUDE.md](CLAUDE.md#wb-mcp-server) for usage details.
+Get your API key from https://wandb.ai/authorize.
+
+## Experiment Tips: Cross-machine sync
+
+`experiments/` can be a symlink to a cloud-synced folder (Dropbox, Google Drive, etc.) for sharing experiment data across machines. See [CLAUDE.md](CLAUDE.md#experiments-directory) for setup.
+
+> [!NOTE]
+> `experiments/` is gitignored because it contains large model files, temporary outputs, and ad-hoc scripts that change frequently during experimentation.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the full development guide.
+See [CLAUDE.md](CLAUDE.md) for the full development guide, including experiment conventions and lessons learned.
 
 ### Branch Workflow
 
