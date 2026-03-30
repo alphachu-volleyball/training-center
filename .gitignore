@@ -15,8 +15,8 @@ build/
 # OS
 .DS_Store
 
-# Experiments
-experiments/
+# Experiments (symlink to Dropbox)
+experiments
 
 # Experiment logs
 wandb/
