@@ -144,6 +144,38 @@ Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 
 Training is not run in CI (long-running).
 
+## Experiment Management (Alphachu Pokédex)
+
+Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://github.com/orgs/alphachu-volleyball/projects/1)
+
+> [!NOTE]
+> The Projects board is org-level and does not transfer with forks. Forked repos should set up their own experiment tracking if needed.
+
+### Status Flow
+
+| Status | Meaning |
+|--------|---------|
+| **Idea** | Hypothesis / brainstorm — not yet designed |
+| **Ready** | Experiment designed, scripts/params ready (may be running) |
+| **Analyzed** | Results interpreted |
+| **Documented** | Compiled into a published W&B Report |
+
+### Category
+
+| Category | Use |
+|----------|-----|
+| `training` | Model training — baseline, selfplay, sweeps |
+| `evaluation` | Model-vs-model assessment, ELO measurement |
+| `analysis` | Metric validation, environment/opponent study, reproducibility |
+| `report` | W&B Report summarizing multiple experiments |
+
+### Card Conventions
+
+- Use **Draft items** (not Issues) to keep the repo Issues tab clean
+- Each card includes: Purpose/Hypothesis, Config/Design, Results, W&B link, Related experiments
+- Sweeps are distinguished by their W&B sweep URL (vs run URL)
+- `pika-zoo version` field tracks which env version the experiment ran on
+
 ## Experiment Tracking
 
 For the full list of tracked metrics, see [README.md § Tracked Metrics](README.md#tracked-metrics).
