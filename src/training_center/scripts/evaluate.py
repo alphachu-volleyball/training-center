@@ -117,14 +117,16 @@ def main() -> None:
     # Execute all games in parallel
     print(f"\nPlaying {len(tasks)} games...", flush=True)
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        all_results = list(executor.map(
-            _play_single_game,
-            [t[0] for t in tasks],
-            [t[1] for t in tasks],
-            [args.simplify_observation] * len(tasks),
-            [args.score] * len(tasks),
-            [t[2] for t in tasks],
-        ))
+        all_results = list(
+            executor.map(
+                _play_single_game,
+                [t[0] for t in tasks],
+                [t[1] for t in tasks],
+                [args.simplify_observation] * len(tasks),
+                [args.score] * len(tasks),
+                [t[2] for t in tasks],
+            )
+        )
     print("All games complete.", flush=True)
 
     # Process results per matchup (order preserved by executor.map)
