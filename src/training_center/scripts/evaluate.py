@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--p1", required=True, help="Comma-separated p1 players: random, builtin, or model path")
     parser.add_argument("--p2", required=True, help="Comma-separated p2 players: random, builtin, or model path")
     parser.add_argument("--games", type=int, default=100, help="Games per pair")
-    parser.add_argument("--score", type=int, default=15, help="Winning score")
+    parser.add_argument("--winning-score", type=int, default=5, help="Points to win per game")
     parser.add_argument(
         "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
     )
@@ -102,7 +102,7 @@ def main() -> None:
             "p1_players": p1_specs,
             "p2_players": p2_specs,
             "games_per_pair": args.games,
-            "winning_score": args.score,
+            "winning_score": args.winning_score,
             "seed": args.seed,
             "workers": n_workers,
             **meta,
@@ -123,7 +123,7 @@ def main() -> None:
                 [t[0] for t in tasks],
                 [t[1] for t in tasks],
                 [args.simplify_observation] * len(tasks),
-                [args.score] * len(tasks),
+                [args.winning_score] * len(tasks),
                 [t[2] for t in tasks],
             )
         )
