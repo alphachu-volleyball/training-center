@@ -12,19 +12,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import wandb
-from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
+from pika_zoo.ai import BuiltinAI, DuckllAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
 from training_center.env_factory import make_vec_env, set_opponent_policy
-from training_center.game import Player, play_game
+from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
@@ -54,66 +56,31 @@ def _record_video(model_path: str, side: str, opponent: str, output_path: str) -
     play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
 
 
-def evaluate_selfplay_detailed(
-    p1_model: PPO,
-    p2_model: PPO,
-    games: int = 20,
-    winning_score: int = 15,
-    seed: int = 42,
-    simplify_observation: bool = False,
-    anchor: AIPolicy | None = None,
-    anchor_name: str = "builtin",
-) -> dict[str, dict]:
-    """Evaluate with detailed stats across 5 matchups."""
-    rng = np.random.default_rng(seed)
-    p1 = Player("p1", model=p1_model)
-    p2 = Player("p2", model=p2_model)
-    random_p = Player("random", policy=RandomAI())
-    anchor_p = Player(anchor_name, policy=anchor if anchor else BuiltinAI())
-
-    matchups: dict[str, dict] = {}
-    for name, p1_player, p2_player, perspective in [
-        ("p1_vs_p2", p1, p2, "p1"),
-        ("p1_vs_random", p1, random_p, "p1"),
-        (f"p1_vs_{anchor_name}", p1, anchor_p, "p1"),
-        ("p2_vs_random", random_p, p2, "p2"),
-        (f"p2_vs_{anchor_name}", anchor_p, p2, "p2"),
-    ]:
-        matchup_seed = int(rng.integers(0, 2**31))
-        name, summary = _run_matchup(
-            name, p1_player, p2_player, games, winning_score, perspective, matchup_seed, simplify_observation
-        )
-        matchups[name] = summary
-
-    return matchups
-
-
-def _run_matchup(
+def _run_matchup_worker(
     name: str,
-    p1_player: Player,
-    p2_player: Player,
+    p1_spec: str,
+    p2_spec: str,
     games: int,
     winning_score: int,
     perspective: str,
     seed: int,
-    simplify_observation: bool = False,
+    simplify_observation: bool,
 ) -> tuple[str, dict]:
-    """Run a single matchup evaluation."""
+    """Worker: run a matchup evaluation in a child process.
+
+    Reconstructs Player objects from specs (model paths or AI names)
+    to avoid pickling PPO/AIPolicy objects across process boundaries.
+    """
+    p1 = make_player(p1_spec, agent="player_1", simplify_observation=simplify_observation)
+    p2 = make_player(p2_spec, agent="player_2", simplify_observation=simplify_observation)
     rng = np.random.default_rng(seed)
     rounds_all = []
     all_stats = []
     wins = 0
 
-    for _i in range(games):
+    for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        episode = play_game(
-            p1_player,
-            p2_player,
-            winning_score=winning_score,
-            seed=game_seed,
-            simplify_observation=simplify_observation,
-            record_frames=True,
-        )
+        episode = play_game(p1, p2, winning_score=winning_score, seed=game_seed, record_frames=True)
         all_stats.append(episode)
         if perspective == "p1":
             wins += 1 if episode.winner == "player_1" else 0
@@ -123,6 +90,103 @@ def _run_matchup(
 
     summary = _summarize(wins, games, rounds_all, all_stats, perspective)
     return name, summary
+
+
+def _eval_checkpoint_worker(
+    current_model_path: str,
+    checkpoint_path: str,
+    side: str,
+    games: int,
+    winning_score: int,
+    simplify_observation: bool,
+    seed: int,
+) -> tuple[str, list[bool]]:
+    """Worker: evaluate current model vs one pool checkpoint.
+
+    Returns (checkpoint_name, list of win booleans).
+    """
+    current = make_player(
+        current_model_path, agent="player_1" if side == "p1" else "player_2", simplify_observation=simplify_observation
+    )
+    opp = make_player(
+        checkpoint_path, agent="player_2" if side == "p1" else "player_1", simplify_observation=simplify_observation
+    )
+    rng = np.random.default_rng(seed)
+    wins: list[bool] = []
+    model_side = "player_1" if side == "p1" else "player_2"
+
+    for _ in range(games):
+        game_seed = int(rng.integers(0, 2**31))
+        if side == "p1":
+            stats = play_game(current, opp, winning_score=winning_score, seed=game_seed)
+        else:
+            stats = play_game(opp, current, winning_score=winning_score, seed=game_seed)
+        wins.append(stats.winner == model_side)
+
+    name = Path(checkpoint_path).name
+    return name, wins
+
+
+def evaluate_selfplay_detailed(
+    p1_model_path: str,
+    p2_model_path: str,
+    games: int = 20,
+    winning_score: int = 15,
+    seed: int = 42,
+    simplify_observation: bool = False,
+    anchor_name: str = "builtin",
+    executor: ProcessPoolExecutor | None = None,
+) -> dict[str, dict]:
+    """Evaluate with detailed stats across 5 matchups (parallel)."""
+    rng = np.random.default_rng(seed)
+
+    matchup_defs = [
+        ("p1_vs_p2", p1_model_path, p2_model_path, "p1"),
+        ("p1_vs_random", p1_model_path, "random", "p1"),
+        (f"p1_vs_{anchor_name}", p1_model_path, anchor_name, "p1"),
+        ("p2_vs_random", "random", p2_model_path, "p2"),
+        (f"p2_vs_{anchor_name}", anchor_name, p2_model_path, "p2"),
+    ]
+
+    if executor is not None:
+        futures = {}
+        for mname, p1s, p2s, perspective in matchup_defs:
+            matchup_seed = int(rng.integers(0, 2**31))
+            f = executor.submit(
+                _run_matchup_worker,
+                mname,
+                p1s,
+                p2s,
+                games,
+                winning_score,
+                perspective,
+                matchup_seed,
+                simplify_observation,
+            )
+            futures[f] = mname
+
+        matchups: dict[str, dict] = {}
+        for f in as_completed(futures):
+            mname, summary = f.result()
+            matchups[mname] = summary
+        return matchups
+
+    # Fallback: sequential (no executor)
+    matchups = {}
+    for mname, p1s, p2s, perspective in matchup_defs:
+        matchup_seed = int(rng.integers(0, 2**31))
+        mname, summary = _run_matchup_worker(
+            mname,
+            p1s,
+            p2s,
+            games,
+            winning_score,
+            perspective,
+            matchup_seed,
+            simplify_observation,
+        )
+        matchups[mname] = summary
+    return matchups
 
 
 def _summarize(
@@ -159,19 +223,18 @@ def _summarize(
 
 
 def _update_pool_stats(
-    model: PPO,
+    model_path: str,
     pool: OpponentPool,
     side: str,
     games: int = 10,
     winning_score: int = 15,
     max_eval: int = 20,
     simplify_observation: bool = False,
+    executor: ProcessPoolExecutor | None = None,
 ) -> dict | None:
-    """Play current model vs pool checkpoints to update PFSP win-rates."""
+    """Play current model vs pool checkpoints to update PFSP win-rates (parallel)."""
     if not pool.checkpoints:
         return None
-
-    current_player = Player(side, model=model)
 
     checkpoints = list(pool.checkpoints)
     if len(checkpoints) > max_eval:
@@ -182,42 +245,55 @@ def _update_pool_stats(
 
     print(f"  [PFSP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
 
-    win_rates = []
     rng = np.random.default_rng()
+    checkpoint_seeds = {path: int(rng.integers(0, 2**31)) for path in checkpoints}
+
+    if executor is not None:
+        futures = {}
+        for path in checkpoints:
+            f = executor.submit(
+                _eval_checkpoint_worker,
+                model_path,
+                path,
+                side,
+                games,
+                winning_score,
+                simplify_observation,
+                checkpoint_seeds[path],
+            )
+            futures[f] = path
+
+        results: dict[str, list[bool]] = {}
+        for f in as_completed(futures):
+            name, wins = f.result()
+            results[name] = wins
+    else:
+        results = {}
+        for path in checkpoints:
+            name, wins = _eval_checkpoint_worker(
+                model_path,
+                path,
+                side,
+                games,
+                winning_score,
+                simplify_observation,
+                checkpoint_seeds[path],
+            )
+            results[name] = wins
+
+    # Apply results to pool (main process only)
+    win_rates = []
     for path in checkpoints:
         name = Path(path).name
-        opp_model = PPO.load(path, device="cpu")
-        opp_player = Player(name, model=opp_model)
-
-        wins = 0
-        for _ in range(games):
-            game_seed = int(rng.integers(0, 2**31))
-            if side == "p1":
-                stats = play_game(
-                    current_player,
-                    opp_player,
-                    winning_score=winning_score,
-                    seed=game_seed,
-                    simplify_observation=simplify_observation,
-                )
-                won = stats.winner == "player_1"
-            else:
-                stats = play_game(
-                    opp_player,
-                    current_player,
-                    winning_score=winning_score,
-                    seed=game_seed,
-                    simplify_observation=simplify_observation,
-                )
-                won = stats.winner == "player_2"
+        wins_list = results[name]
+        for won in wins_list:
             pool.update_stats(name, won)
-            if won:
-                wins += 1
 
+        n_wins = sum(wins_list)
         wr = pool.get_win_rate(name)
         win_rates.append(wr)
         weight = 1.0 - wr + 0.1
-        print(f"    {name}: {wins}W {games - wins}L (wr={wr:.2f}, weight={weight:.2f})", flush=True)
+        print(f"    {name}: {n_wins}W {games - n_wins}L (wr={wr:.2f}, weight={weight:.2f})", flush=True)
 
     return {
         "avg_winrate": float(np.mean(win_rates)),
@@ -412,8 +488,11 @@ def main() -> None:
     pool_p1 = OpponentPool(str(save_dir / "p1"), "p1", anchor=anchor_policy)
     pool_p2 = OpponentPool(str(save_dir / "p2"), "p2", anchor=anchor_policy)
 
+    eval_workers = os.cpu_count()
+    eval_executor = ProcessPoolExecutor(max_workers=eval_workers)
+
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
-    print(f"Envs: {args.num_envs} (DummyVecEnv)")
+    print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
     if adaptive_config:
         first, last = adaptive_config["thresholds"][0], adaptive_config["thresholds"][-1]
         print(
@@ -441,13 +520,13 @@ def main() -> None:
             _log_model_artifact(run, "p1-latest", p1_latest)
             _log_model_artifact(run, "p2-latest", p2_latest)
             matchups = evaluate_selfplay_detailed(
-                p1_model,
-                p2_model,
+                p1_latest + ".zip",
+                p2_latest + ".zip",
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 simplify_observation=args.simplify_observation,
-                anchor=anchor_policy,
                 anchor_name=anchor_name,
+                executor=eval_executor,
             )
 
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
@@ -495,22 +574,24 @@ def main() -> None:
 
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(
-                p1_model,
+                p1_latest + ".zip",
                 pool_p2,
                 side="p1",
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
                 simplify_observation=args.simplify_observation,
+                executor=eval_executor,
             )
             p2_pfsp = _update_pool_stats(
-                p2_model,
+                p2_latest + ".zip",
                 pool_p1,
                 side="p2",
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
                 simplify_observation=args.simplify_observation,
+                executor=eval_executor,
             )
             if p1_pfsp:
                 log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
@@ -629,6 +710,7 @@ def main() -> None:
 
     print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
 
+    eval_executor.shutdown()
     p1_envs.close()
     p2_envs.close()
     run.finish()
