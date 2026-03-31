@@ -232,6 +232,9 @@ def main() -> None:
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--noise-level", "--noise_level", type=int, default=None, choices=[0, 1, 2, 3, 4, 5], help="Noise preset level"
+    )
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
@@ -257,8 +260,20 @@ def main() -> None:
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
+    NOISE_LEVELS = {
+        0: (0, 0, 0),
+        1: (5, 3, 1),
+        2: (10, 5, 2),
+        3: (20, 10, 3),
+        4: (35, 15, 4),
+        5: (50, 20, 5),
+    }
+
     noise = None
-    if args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
+    if args.noise_level is not None and args.noise_level > 0:
+        x, xv, yv = NOISE_LEVELS[args.noise_level]
+        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
+    elif args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
         noise = NoiseConfig(
             x_range=args.noise_x or 0,
             x_velocity_range=args.noise_x_vel or 0,
@@ -292,6 +307,7 @@ def main() -> None:
             "anchor_prob": args.anchor_prob,
             "ent_coef": args.ent_coef,
             "eval_freq": args.eval_freq,
+            "noise_level": args.noise_level,
             "noise_x": noise.x_range if noise else None,
             "noise_x_vel": noise.x_velocity_range if noise else None,
             "noise_y_vel": noise.y_velocity_range if noise else None,
