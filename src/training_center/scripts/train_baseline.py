@@ -8,6 +8,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +22,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.elo import INITIAL_ELO, update_elo
 from training_center.env_factory import make_vec_env
-from training_center.game import Player, play_game
+from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 
@@ -32,6 +34,60 @@ def _record_video(model_path: str, side: str, opponent: str, output_path: str) -
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
     play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
+
+
+def _eval_matchup_worker(
+    model_path: str,
+    model_side: str,
+    opp_name: str,
+    games: int,
+    winning_score: int,
+    simplify_observation: bool,
+    seed: int,
+) -> tuple[str, dict]:
+    """Worker: evaluate model vs one opponent in a child process.
+
+    Returns (opp_name, result_dict) with per-game winners, scores, rounds, and metrics.
+    """
+    model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
+    opp_player = make_player(opp_name, agent="player_2" if model_side == "player_1" else "player_1",
+                             simplify_observation=simplify_observation)
+    rng = np.random.default_rng(seed)
+    all_episodes = []
+
+    for _ in range(games):
+        game_seed = int(rng.integers(0, 2**31))
+        if model_side == "player_1":
+            episode = play_game(model_player, opp_player, winning_score=winning_score,
+                                seed=game_seed, record_frames=True)
+        else:
+            episode = play_game(opp_player, model_player, winning_score=winning_score,
+                                seed=game_seed, record_frames=True)
+        all_episodes.append(episode)
+
+    # Compute metrics inside worker to avoid serializing frame data
+    opp_side = "player_2" if model_side == "player_1" else "player_1"
+    model_idx = 0 if model_side == "player_1" else 1
+    all_rounds = [r for e in all_episodes for r in e.rounds]
+    model_serve = [r for r in all_rounds if r.server == model_side]
+    opp_serve = [r for r in all_rounds if r.server == opp_side]
+
+    wins = sum(1 for e in all_episodes if e.winner == model_side)
+    detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
+
+    result = {
+        "wins": wins,
+        "losses": games - wins,
+        "win_rate": wins / games,
+        "avg_score": float(np.mean([e.scores[model_idx] for e in all_episodes])),
+        "serve_win_rate": (sum(1 for r in model_serve if r.scorer == model_side) / len(model_serve))
+        if model_serve else None,
+        "receive_win_rate": (sum(1 for r in opp_serve if r.scorer == model_side) / len(opp_serve))
+        if opp_serve else None,
+        "game_winners": [e.winner for e in all_episodes],
+        **detail,
+    }
+    return opp_name, result
 
 
 class WandbMetricsCallback(BaseCallback):
@@ -54,7 +110,9 @@ class EvalCallback(BaseCallback):
         save_path: Path,
         side: str = "player_1",
         eval_games: int = 20,
+        eval_opponents: list[str] | None = None,
         simplify_observation: bool = False,
+        executor: ProcessPoolExecutor | None = None,
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
@@ -62,81 +120,75 @@ class EvalCallback(BaseCallback):
         self.save_path = save_path
         self.side = side
         self.eval_games = eval_games
+        self.eval_opponents = eval_opponents or ["random", "builtin"]
         self.simplify_observation = simplify_observation
+        self.executor = executor
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
             # Save checkpoint
             ckpt_path = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
             self.model.save(str(ckpt_path))
+            model_path = str(ckpt_path) + ".zip"
 
             artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
-            artifact.add_file(str(ckpt_path) + ".zip")
+            artifact.add_file(model_path)
             wandb.run.log_artifact(artifact)
 
-            # Evaluate against each opponent (place model on its training side)
-            model_player = Player("model", model=self.model)
+            # Evaluate against each opponent in parallel
             model_side = self.side
-            opp_side = "player_2" if model_side == "player_1" else "player_1"
-            elo = INITIAL_ELO
-            log_data: dict = {}
             rng = np.random.default_rng()
 
-            for opp_name in ["random", "builtin"]:
-                opp = Player(opp_name, policy=BuiltinAI() if opp_name == "builtin" else RandomAI())
-                opp_elo = INITIAL_ELO
-                wins = 0
-                all_rounds = []
-                all_episodes = []
-
-                for _ in range(self.eval_games):
+            if self.executor is not None:
+                futures = {}
+                for opp_name in self.eval_opponents:
                     seed = int(rng.integers(0, 2**31))
-                    if model_side == "player_1":
-                        episode = play_game(
-                            model_player,
-                            opp,
-                            winning_score=5,
-                            seed=seed,
-                            simplify_observation=self.simplify_observation,
-                            record_frames=True,
-                        )
-                    else:
-                        episode = play_game(
-                            opp,
-                            model_player,
-                            winning_score=5,
-                            seed=seed,
-                            simplify_observation=self.simplify_observation,
-                            record_frames=True,
-                        )
-                    result = 1 if episode.winner == model_side else 0
-                    wins += result
-                    elo, opp_elo = update_elo(elo, opp_elo, result)
-                    all_rounds.extend(episode.rounds)
-                    all_episodes.append(episode)
+                    f = self.executor.submit(
+                        _eval_matchup_worker, model_path, model_side, opp_name,
+                        self.eval_games, 5, self.simplify_observation, seed,
+                    )
+                    futures[f] = opp_name
 
-                losses = self.eval_games - wins
-                model_idx = 0 if model_side == "player_1" else 1
-                model_serve = [r for r in all_rounds if r.server == model_side]
-                opp_serve = [r for r in all_rounds if r.server == opp_side]
+                results: dict[str, dict] = {}
+                for f in as_completed(futures):
+                    opp_name, result = f.result()
+                    results[opp_name] = result
+            else:
+                results = {}
+                for opp_name in self.eval_opponents:
+                    seed = int(rng.integers(0, 2**31))
+                    _, result = _eval_matchup_worker(
+                        model_path, model_side, opp_name,
+                        self.eval_games, 5, self.simplify_observation, seed,
+                    )
+                    results[opp_name] = result
 
-                log_data[f"eval/vs_{opp_name}/win_rate"] = wins / self.eval_games
-                log_data[f"eval/vs_{opp_name}/avg_score"] = float(np.mean([e.scores[model_idx] for e in all_episodes]))
+            # Compute ELO and log
+            elo = INITIAL_ELO
+            log_data: dict = {}
 
-                detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
-                for k, v in detail.items():
-                    log_data[f"eval/vs_{opp_name}/{k}"] = v
-                if model_serve:
-                    log_data[f"eval/vs_{opp_name}/serve_win_rate"] = sum(
-                        1 for r in model_serve if r.scorer == model_side
-                    ) / len(model_serve)
-                if opp_serve:
-                    log_data[f"eval/vs_{opp_name}/receive_win_rate"] = sum(
-                        1 for r in opp_serve if r.scorer == model_side
-                    ) / len(opp_serve)
+            for opp_name in self.eval_opponents:
+                r = results[opp_name]
+                # Update ELO from per-game winners
+                opp_elo = INITIAL_ELO
+                for winner in r["game_winners"]:
+                    game_result = 1 if winner == model_side else 0
+                    elo, opp_elo = update_elo(elo, opp_elo, game_result)
+
+                log_data[f"eval/vs_{opp_name}/win_rate"] = r["win_rate"]
+                log_data[f"eval/vs_{opp_name}/avg_score"] = r["avg_score"]
+                for k in ["avg_round_frames", "std_round_frames", "action_entropy",
+                          "power_hit_rate", "ball_own_side_ratio",
+                          "serve_avg_round_frames", "receive_avg_round_frames"]:
+                    if k in r:
+                        log_data[f"eval/vs_{opp_name}/{k}"] = r[k]
+                if r["serve_win_rate"] is not None:
+                    log_data[f"eval/vs_{opp_name}/serve_win_rate"] = r["serve_win_rate"]
+                if r["receive_win_rate"] is not None:
+                    log_data[f"eval/vs_{opp_name}/receive_win_rate"] = r["receive_win_rate"]
 
                 if self.verbose:
-                    print(f"  vs {opp_name}: {wins}W {losses}L")
+                    print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
 
             log_data["eval/elo"] = elo
             wandb.run.log(log_data, step=self.num_timesteps)
@@ -247,6 +299,8 @@ def main() -> None:
     else:
         model = PPO("MlpPolicy", env, verbose=1, seed=c.seed, device="cpu")
 
+    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count()) if c.eval_freq > 0 else None
+
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,10 +310,14 @@ def main() -> None:
                 save_path=save_path,
                 side=c.side,
                 simplify_observation=c.simplify_observation,
+                executor=eval_executor,
             )
         )
 
     model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
+
+    if eval_executor is not None:
+        eval_executor.shutdown()
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(save_path))
