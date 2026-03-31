@@ -105,10 +105,12 @@ def _eval_checkpoint_worker(
 
     Returns (checkpoint_name, list of win booleans).
     """
-    current = make_player(current_model_path, agent="player_1" if side == "p1" else "player_2",
-                          simplify_observation=simplify_observation)
-    opp = make_player(checkpoint_path, agent="player_2" if side == "p1" else "player_1",
-                      simplify_observation=simplify_observation)
+    current = make_player(
+        current_model_path, agent="player_1" if side == "p1" else "player_2", simplify_observation=simplify_observation
+    )
+    opp = make_player(
+        checkpoint_path, agent="player_2" if side == "p1" else "player_1", simplify_observation=simplify_observation
+    )
     rng = np.random.default_rng(seed)
     wins: list[bool] = []
     model_side = "player_1" if side == "p1" else "player_2"
@@ -151,8 +153,15 @@ def evaluate_selfplay_detailed(
         for mname, p1s, p2s, perspective in matchup_defs:
             matchup_seed = int(rng.integers(0, 2**31))
             f = executor.submit(
-                _run_matchup_worker, mname, p1s, p2s, games, winning_score,
-                perspective, matchup_seed, simplify_observation,
+                _run_matchup_worker,
+                mname,
+                p1s,
+                p2s,
+                games,
+                winning_score,
+                perspective,
+                matchup_seed,
+                simplify_observation,
             )
             futures[f] = mname
 
@@ -167,8 +176,14 @@ def evaluate_selfplay_detailed(
     for mname, p1s, p2s, perspective in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
-            mname, p1s, p2s, games, winning_score,
-            perspective, matchup_seed, simplify_observation,
+            mname,
+            p1s,
+            p2s,
+            games,
+            winning_score,
+            perspective,
+            matchup_seed,
+            simplify_observation,
         )
         matchups[mname] = summary
     return matchups
@@ -237,8 +252,14 @@ def _update_pool_stats(
         futures = {}
         for path in checkpoints:
             f = executor.submit(
-                _eval_checkpoint_worker, model_path, path, side, games,
-                winning_score, simplify_observation, checkpoint_seeds[path],
+                _eval_checkpoint_worker,
+                model_path,
+                path,
+                side,
+                games,
+                winning_score,
+                simplify_observation,
+                checkpoint_seeds[path],
             )
             futures[f] = path
 
@@ -250,8 +271,13 @@ def _update_pool_stats(
         results = {}
         for path in checkpoints:
             name, wins = _eval_checkpoint_worker(
-                model_path, path, side, games,
-                winning_score, simplify_observation, checkpoint_seeds[path],
+                model_path,
+                path,
+                side,
+                games,
+                winning_score,
+                simplify_observation,
+                checkpoint_seeds[path],
             )
             results[name] = wins
 

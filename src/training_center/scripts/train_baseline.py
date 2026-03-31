@@ -50,19 +50,24 @@ def _eval_matchup_worker(
     Returns (opp_name, result_dict) with per-game winners, scores, rounds, and metrics.
     """
     model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
-    opp_player = make_player(opp_name, agent="player_2" if model_side == "player_1" else "player_1",
-                             simplify_observation=simplify_observation)
+    opp_player = make_player(
+        opp_name,
+        agent="player_2" if model_side == "player_1" else "player_1",
+        simplify_observation=simplify_observation,
+    )
     rng = np.random.default_rng(seed)
     all_episodes = []
 
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
         if model_side == "player_1":
-            episode = play_game(model_player, opp_player, winning_score=winning_score,
-                                seed=game_seed, record_frames=True)
+            episode = play_game(
+                model_player, opp_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         else:
-            episode = play_game(opp_player, model_player, winning_score=winning_score,
-                                seed=game_seed, record_frames=True)
+            episode = play_game(
+                opp_player, model_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         all_episodes.append(episode)
 
     # Compute metrics inside worker to avoid serializing frame data
@@ -81,9 +86,11 @@ def _eval_matchup_worker(
         "win_rate": wins / games,
         "avg_score": float(np.mean([e.scores[model_idx] for e in all_episodes])),
         "serve_win_rate": (sum(1 for r in model_serve if r.scorer == model_side) / len(model_serve))
-        if model_serve else None,
+        if model_serve
+        else None,
         "receive_win_rate": (sum(1 for r in opp_serve if r.scorer == model_side) / len(opp_serve))
-        if opp_serve else None,
+        if opp_serve
+        else None,
         "game_winners": [e.winner for e in all_episodes],
         **detail,
     }
@@ -144,8 +151,14 @@ class EvalCallback(BaseCallback):
                 for opp_name in self.eval_opponents:
                     seed = int(rng.integers(0, 2**31))
                     f = self.executor.submit(
-                        _eval_matchup_worker, model_path, model_side, opp_name,
-                        self.eval_games, 5, self.simplify_observation, seed,
+                        _eval_matchup_worker,
+                        model_path,
+                        model_side,
+                        opp_name,
+                        self.eval_games,
+                        5,
+                        self.simplify_observation,
+                        seed,
                     )
                     futures[f] = opp_name
 
@@ -158,8 +171,13 @@ class EvalCallback(BaseCallback):
                 for opp_name in self.eval_opponents:
                     seed = int(rng.integers(0, 2**31))
                     _, result = _eval_matchup_worker(
-                        model_path, model_side, opp_name,
-                        self.eval_games, 5, self.simplify_observation, seed,
+                        model_path,
+                        model_side,
+                        opp_name,
+                        self.eval_games,
+                        5,
+                        self.simplify_observation,
+                        seed,
                     )
                     results[opp_name] = result
 
@@ -177,9 +195,15 @@ class EvalCallback(BaseCallback):
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = r["win_rate"]
                 log_data[f"eval/vs_{opp_name}/avg_score"] = r["avg_score"]
-                for k in ["avg_round_frames", "std_round_frames", "action_entropy",
-                          "power_hit_rate", "ball_own_side_ratio",
-                          "serve_avg_round_frames", "receive_avg_round_frames"]:
+                for k in [
+                    "avg_round_frames",
+                    "std_round_frames",
+                    "action_entropy",
+                    "power_hit_rate",
+                    "ball_own_side_ratio",
+                    "serve_avg_round_frames",
+                    "receive_avg_round_frames",
+                ]:
                     if k in r:
                         log_data[f"eval/vs_{opp_name}/{k}"] = r[k]
                 if r["serve_win_rate"] is not None:
