@@ -62,6 +62,81 @@ uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir e
 uv run evaluate --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
 ```
 
+## Training Scripts
+
+### `train-baseline` — Fixed-opponent PPO training
+
+Trains a single agent against a fixed rule-based opponent (random, builtin, stone, duckll). The simplest training mode — useful for bootstrapping a policy before self-play.
+
+**Process:**
+
+1. Create `SubprocVecEnv` with N parallel environments, each running the fixed opponent
+2. Initialize PPO (or resume from `--init-model`)
+3. `model.learn()` runs continuously for `--timesteps` steps
+4. `EvalCallback` fires every `--eval-freq` steps:
+   - Saves a checkpoint to disk
+   - Evaluates against each opponent in parallel (`ProcessPoolExecutor`)
+   - Computes ELO, win rate, detailed metrics → logs to W&B
+5. Saves final model + records sample videos
+
+**Key design decisions:**
+
+- **SubprocVecEnv** — opponent is fixed, so env parallelization works directly. Each child process runs its own env + opponent independently. This is where multicore CPU gives linear speedup.
+- **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
+- **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
+
+### `train-selfplay` — PFSP self-play training
+
+Alternately trains two agents (p1 left, p2 right) against each other and a pool of past checkpoints, using Prioritized Fictitious Self-Play.
+
+**Process:**
+
+1. Create `DummyVecEnv` for both p1 and p2 (opponent must be swappable in-place)
+2. Initialize two PPO models
+3. For each iteration:
+   - **Evaluate** (every `--eval-freq` iters): 5 matchups + PFSP pool stats, all in parallel via `ProcessPoolExecutor`
+   - **Save** checkpoint to opponent pool (every `--save-interval` iters)
+   - **Train p1**: sample opponent from p2 pool (PFSP) or anchor AI, swap opponent policy, `model.learn(steps_per_iter)`
+   - **Train p2**: same against p1 pool
+4. Saves final models + records sample videos
+
+**Key design decisions:**
+
+- **DummyVecEnv** (not SubprocVecEnv) — self-play requires swapping the opponent policy every iteration via `set_opponent_policy()`, which directly modifies the env's internal state. This requires same-process access (`vec_env.envs[i]`), which SubprocVecEnv doesn't allow. We benchmarked a custom SubprocVecEnv with pipe-based opponent swap, but the lightweight env (low-dim vector physics) made pipe serialization overhead comparable to parallelism gains (~6% improvement), so DummyVecEnv remains the better tradeoff.
+- **Parallel evaluation** — the evaluation phase (matchups + PFSP pool stats) is fully parallelized with `ProcessPoolExecutor`. Workers receive model paths, reconstruct players internally, and return serializable results. This avoids the main bottleneck as pools grow (20+ checkpoints × 10 games each).
+- **PFSP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
+- **Anchor + pool curriculum** — a configurable mix of rule-based anchor AI and pool opponents. Supports fixed ratio, schedule-based, and adaptive (win-rate-based) curricula.
+
+### `evaluate` — Round-robin ELO evaluation
+
+Standalone evaluation script for comparing any set of models/AIs in a round-robin format.
+
+**Process:**
+
+1. Build cross-product of p1 pool × p2 pool (skip self-play pairs)
+2. Pre-generate all game seeds for deterministic reproducibility
+3. Submit all games to `ProcessPoolExecutor` at once
+4. Collect results, compute per-matchup stats and ELO ratings
+5. Log as `wandb.Table` for sweep-level comparison
+
+**Key design decisions:**
+
+- **Maximum parallelism** — all games across all matchups are submitted as individual tasks. With hundreds of games and 8+ cores, this gives near-linear speedup.
+- **Path-based worker pattern** — workers receive string specs (`"builtin"`, `"duckll:5"`, or model paths), reconstruct `Player` objects internally. This avoids pickling AIPolicy/PPO objects across process boundaries.
+- **Deterministic seeding** — seeds are pre-generated from a single RNG in the main process before any parallel execution, ensuring reproducible results regardless of worker scheduling order.
+
+### Common Patterns
+
+All three scripts share these conventions:
+
+| Pattern | How |
+|---------|-----|
+| Model serialization | Pass file paths to workers, `PPO.load()` / `make_player()` inside child process |
+| Eval parallelism | `ProcessPoolExecutor` + `as_completed`, results collected in main process |
+| Metrics computation | `compute_eval_metrics()` runs inside worker to avoid serializing frame data |
+| W&B logging | Always in main process (W&B run is not fork-safe) |
+| Reproducibility | Pre-generate seeds from a single RNG, pass to workers |
+
 ## Experiment Tracking
 
 Each training run automatically records git commit hash and pika-zoo version to [W&B](https://wandb.ai/) for reproducibility.
