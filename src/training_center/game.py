@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from pika_zoo.ai import BuiltinAI, RandomAI
+from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.ai.sb3_adapter import SB3ModelPolicy
 from pika_zoo.env.pikachu_volleyball import PikachuVolleyballEnv
@@ -37,7 +37,12 @@ class Player:
 
 
 def make_player(spec: str, agent: str = "player_1", simplify_observation: bool = False) -> Player:
-    """Create a Player from a string spec: 'random', 'builtin', or a model path.
+    """Create a Player from a string spec.
+
+    Supported specs:
+    - 'random', 'builtin', 'stone': built-in AI policies
+    - 'duckll' or 'duckll:N': DuckllAI with optional preset level (0-10)
+    - path: SB3 model path (loaded via SB3ModelPolicy)
 
     For model paths, ``agent`` determines which side the model was trained on,
     so that SB3ModelPolicy can correctly map actions and observations.
@@ -47,6 +52,13 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
         return Player("random", policy=RandomAI())
     elif spec == "builtin":
         return Player("builtin", policy=BuiltinAI())
+    elif spec == "stone":
+        return Player("stone", policy=StoneAI())
+    elif spec == "duckll" or spec.startswith("duckll:"):
+        if ":" in spec:
+            preset = int(spec.split(":")[1])
+            return Player(f"duckll:{preset}", policy=DuckllAI(preset=preset))
+        return Player("duckll", policy=DuckllAI())
     else:
         name = spec.rstrip("/").split("/")[-1]
         return Player(

@@ -1,7 +1,7 @@
-"""Self-play training script (PFSP + builtin anchor).
+"""Self-play training script (PFSP + configurable anchor).
 
 Alternately trains p1_model (left) and p2_model (right).
-Opponent mix: builtin_prob (rule AI) + remaining (PFSP pool).
+Opponent mix: anchor_prob (rule AI) + remaining (PFSP pool).
 
 Usage:
   uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
@@ -17,7 +17,8 @@ from pathlib import Path
 
 import numpy as np
 import wandb
-from pika_zoo.ai import BuiltinAI, RandomAI
+from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
+from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
@@ -60,21 +61,23 @@ def evaluate_selfplay_detailed(
     winning_score: int = 15,
     seed: int = 42,
     simplify_observation: bool = False,
+    anchor: AIPolicy | None = None,
+    anchor_name: str = "builtin",
 ) -> dict[str, dict]:
     """Evaluate with detailed stats across 5 matchups."""
     rng = np.random.default_rng(seed)
     p1 = Player("p1", model=p1_model)
     p2 = Player("p2", model=p2_model)
     random_p = Player("random", policy=RandomAI())
-    builtin_p = Player("builtin", policy=BuiltinAI())
+    anchor_p = Player(anchor_name, policy=anchor if anchor else BuiltinAI())
 
     matchups: dict[str, dict] = {}
     for name, p1_player, p2_player, perspective in [
         ("p1_vs_p2", p1, p2, "p1"),
         ("p1_vs_random", p1, random_p, "p1"),
-        ("p1_vs_builtin", p1, builtin_p, "p1"),
+        (f"p1_vs_{anchor_name}", p1, anchor_p, "p1"),
         ("p2_vs_random", random_p, p2, "p2"),
-        ("p2_vs_builtin", builtin_p, p2, "p2"),
+        (f"p2_vs_{anchor_name}", anchor_p, p2, "p2"),
     ]:
         matchup_seed = int(rng.integers(0, 2**31))
         name, summary = _run_matchup(
@@ -229,11 +232,15 @@ def main() -> None:
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--noise-level", "--noise_level", type=int, default=None, choices=[0, 1, 2, 3, 4, 5], help="Noise preset level"
+    )
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
-    parser.add_argument("--builtin-prob", type=float, default=0.6)
+    parser.add_argument("--anchor", default="builtin", help="Anchor opponent: builtin, stone, duckll, duckll:N")
+    parser.add_argument("--anchor-prob", type=float, default=0.6, help="Probability of anchor opponent per iteration")
     parser.add_argument("--curriculum", default=None, help="Path to curriculum JSON file")
     parser.add_argument("--adaptive", default=None, help="Path to adaptive curriculum JSON file")
     parser.add_argument("--save-interval", type=int, default=5)
@@ -253,13 +260,38 @@ def main() -> None:
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
+    NOISE_LEVELS = {
+        0: (0, 0, 0),
+        1: (5, 3, 1),
+        2: (10, 5, 2),
+        3: (20, 10, 3),
+        4: (35, 15, 4),
+        5: (50, 20, 5),
+    }
+
     noise = None
-    if args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
+    if args.noise_level is not None and args.noise_level > 0:
+        x, xv, yv = NOISE_LEVELS[args.noise_level]
+        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
+    elif args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
         noise = NoiseConfig(
             x_range=args.noise_x or 0,
             x_velocity_range=args.noise_x_vel or 0,
             y_velocity_range=args.noise_y_vel or 0,
         )
+
+    def _make_anchor(spec: str) -> AIPolicy:
+        if spec == "builtin":
+            return BuiltinAI()
+        elif spec == "stone":
+            return StoneAI()
+        elif spec == "duckll" or spec.startswith("duckll:"):
+            preset = int(spec.split(":")[1]) if ":" in spec else None
+            return DuckllAI(preset=preset) if preset is not None else DuckllAI()
+        return BuiltinAI()
+
+    anchor_policy = _make_anchor(args.anchor)
+    anchor_name = args.anchor
 
     run = wandb.init(
         entity=args.wandb_entity,
@@ -271,9 +303,11 @@ def main() -> None:
             "steps_per_iter": args.steps_per_iter,
             "num_envs": args.num_envs,
             "seed": args.seed,
-            "builtin_prob": args.builtin_prob,
+            "anchor": args.anchor,
+            "anchor_prob": args.anchor_prob,
             "ent_coef": args.ent_coef,
             "eval_freq": args.eval_freq,
+            "noise_level": args.noise_level,
             "noise_x": noise.x_range if noise else None,
             "noise_x_vel": noise.x_velocity_range if noise else None,
             "noise_y_vel": noise.y_velocity_range if noise else None,
@@ -296,8 +330,8 @@ def main() -> None:
         with open(args.adaptive) as f:
             adaptive_config = json.load(f)
 
-    p1_builtin_winrate = 0.0
-    p2_builtin_winrate = 0.0
+    p1_anchor_winrate = 0.0
+    p2_anchor_winrate = 0.0
 
     def _interpolate_entry(a: dict, b: dict, t: float) -> tuple[float, float]:
         builtin = a["builtin"] + t * (b["builtin"] - a["builtin"])
@@ -323,12 +357,12 @@ def main() -> None:
         return tn["builtin"], tn.get("latest", 0) + tn.get("pool", 1.0 - tn["builtin"])
 
     def get_probs(iteration: int, side: str = "p1") -> tuple[float, float]:
-        nonlocal p1_builtin_winrate, p2_builtin_winrate
+        nonlocal p1_anchor_winrate, p2_anchor_winrate
         if adaptive_config:
-            wr = p1_builtin_winrate if side == "p1" else p2_builtin_winrate
+            wr = p1_anchor_winrate if side == "p1" else p2_anchor_winrate
             return _adaptive_probs(wr)
         if curriculum_schedule is None:
-            return args.builtin_prob, 1.0 - args.builtin_prob
+            return args.anchor_prob, 1.0 - args.anchor_prob
         if iteration <= curriculum_schedule[0]["iter"]:
             s = curriculum_schedule[0]
             return s["builtin"], s.get("latest", 0) + s.get("pool", 1.0 - s["builtin"])
@@ -340,7 +374,7 @@ def main() -> None:
             if a["iter"] <= iteration <= b["iter"]:
                 t = (iteration - a["iter"]) / (b["iter"] - a["iter"])
                 return _interpolate_entry(a, b, t)
-        return args.builtin_prob, 1.0 - args.builtin_prob
+        return args.anchor_prob, 1.0 - args.anchor_prob
 
     # Create envs (DummyVecEnv for opponent policy swapping)
     p1_envs = make_vec_env(
@@ -375,25 +409,25 @@ def main() -> None:
         p2_model = PPO("MlpPolicy", p2_envs, seed=args.seed + 1, **ppo_kwargs)
 
     # Opponent pools
-    pool_p1 = OpponentPool(str(save_dir / "p1"), "p1")
-    pool_p2 = OpponentPool(str(save_dir / "p2"), "p2")
+    pool_p1 = OpponentPool(str(save_dir / "p1"), "p1", anchor=anchor_policy)
+    pool_p2 = OpponentPool(str(save_dir / "p2"), "p2", anchor=anchor_policy)
 
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv)")
     if adaptive_config:
         first, last = adaptive_config["thresholds"][0], adaptive_config["thresholds"][-1]
         print(
-            f"Adaptive curriculum: builtin {first['builtin'] * 100:.0f}%"
+            f"Adaptive curriculum: anchor({anchor_name}) {first['builtin'] * 100:.0f}%"
             f"->{last['builtin'] * 100:.0f}% based on win rate"
         )
     elif curriculum_schedule:
         first, last = curriculum_schedule[0], curriculum_schedule[-1]
-        print(f"Curriculum: builtin {first['builtin'] * 100:.0f}%->{last['builtin'] * 100:.0f}%")
+        print(f"Curriculum: anchor({anchor_name}) {first['builtin'] * 100:.0f}%->{last['builtin'] * 100:.0f}%")
     else:
-        print(f"Opponent mix: builtin={args.builtin_prob}, pool(PFSP)={1.0 - args.builtin_prob:.1f}")
+        print(f"Opponent mix: {anchor_name}={args.anchor_prob}, pool(PFSP)={1.0 - args.anchor_prob:.1f}")
 
-    best_p1_builtin = -1.0
-    best_p2_builtin = -1.0
+    best_p1_anchor = -1.0
+    best_p2_anchor = -1.0
 
     for iteration in range(args.total_iterations):
         step = p1_model.num_timesteps
@@ -412,6 +446,8 @@ def main() -> None:
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 simplify_observation=args.simplify_observation,
+                anchor=anchor_policy,
+                anchor_name=anchor_name,
             )
 
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
@@ -486,44 +522,44 @@ def main() -> None:
                 log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
 
             # Adaptive curriculum update
-            p1_wr = matchups.get("p1_vs_builtin", {}).get("win_rate", 0)
-            p2_wr = matchups.get("p2_vs_builtin", {}).get("win_rate", 0)
+            p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
+            p2_wr = matchups.get(f"p2_vs_{anchor_name}", {}).get("win_rate", 0)
             if adaptive_config:
-                p1_builtin_winrate = p1_wr
-                p2_builtin_winrate = p2_wr
+                p1_anchor_winrate = p1_wr
+                p2_anchor_winrate = p2_wr
                 p1_bp, p1_pp = get_probs(iteration, side="p1")
                 p2_bp, p2_pp = get_probs(iteration, side="p2")
                 print(
-                    f"  [ADAPTIVE] p1: wr={p1_wr * 100:.0f}% -> builtin={p1_bp * 100:.0f}% pool={p1_pp * 100:.0f}%"
-                    f"  |  p2: wr={p2_wr * 100:.0f}% -> builtin={p2_bp * 100:.0f}% pool={p2_pp * 100:.0f}%",
+                    f"  [ADAPTIVE] p1: wr={p1_wr * 100:.0f}% -> anchor={p1_bp * 100:.0f}% pool={p1_pp * 100:.0f}%"
+                    f"  |  p2: wr={p2_wr * 100:.0f}% -> anchor={p2_bp * 100:.0f}% pool={p2_pp * 100:.0f}%",
                     flush=True,
                 )
 
             # Save best models
-            if p1_wr > best_p1_builtin:
-                best_p1_builtin = p1_wr
+            if p1_wr > best_p1_anchor:
+                best_p1_anchor = p1_wr
                 p1_best = str(save_dir / "p1" / "selfplay_best")
                 p1_model.save(p1_best)
                 _log_model_artifact(run, "p1-best", p1_best)
-                print(f"  [BEST] p1 vs builtin: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
-            if p2_wr > best_p2_builtin:
-                best_p2_builtin = p2_wr
+                print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
+            if p2_wr > best_p2_anchor:
+                best_p2_anchor = p2_wr
                 p2_best = str(save_dir / "p2" / "selfplay_best")
                 p2_model.save(p2_best)
                 _log_model_artifact(run, "p2-best", p2_best)
-                print(f"  [BEST] p2 vs builtin: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
+                print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
             run.log(log_data, step=step)
 
         # --- Train ---
-        p1_builtin_prob, p1_pool_prob = get_probs(iteration, side="p1")
-        p2_builtin_prob, p2_pool_prob = get_probs(iteration, side="p2")
+        p1_anchor_prob, p1_pool_prob = get_probs(iteration, side="p1")
+        p2_anchor_prob, p2_pool_prob = get_probs(iteration, side="p2")
 
         run.log(
             {
-                "p1/curriculum/builtin_prob": p1_builtin_prob,
+                "p1/curriculum/anchor_prob": p1_anchor_prob,
                 "p1/curriculum/pool_prob": p1_pool_prob,
-                "p2/curriculum/builtin_prob": p2_builtin_prob,
+                "p2/curriculum/anchor_prob": p2_anchor_prob,
                 "p2/curriculum/pool_prob": p2_pool_prob,
             },
             step=step,
@@ -537,32 +573,32 @@ def main() -> None:
             _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
 
         # Train p1 against p2 opponent
-        opp, opp_name, is_builtin = pool_p2.sample_opponent(latest_model=p2_model, builtin_prob=p1_builtin_prob)
-        if is_builtin:
+        opp, opp_name, is_anchor = pool_p2.sample_opponent(latest_model=p2_model, anchor_prob=p1_anchor_prob)
+        if is_anchor:
             for env in p1_envs.envs:
-                set_opponent_policy(env, BuiltinAI())
+                set_opponent_policy(env, anchor_policy)
         else:
             policy = make_opponent_policy(opp)
             for env in p1_envs.envs:
                 set_opponent_policy(env, policy)
         print(
-            f"  [iter {iteration}] p1 vs {opp_name} | builtin={p1_builtin_prob:.0%} pool={p1_pool_prob:.0%}",
+            f"  [iter {iteration}] p1 vs {opp_name} | anchor={p1_anchor_prob:.0%} pool={p1_pool_prob:.0%}",
             flush=True,
         )
         p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
         _log_sb3_metrics(run, p1_model, "p1")
 
         # Train p2 against p1 opponent
-        opp, opp_name, is_builtin = pool_p1.sample_opponent(latest_model=p1_model, builtin_prob=p2_builtin_prob)
-        if is_builtin:
+        opp, opp_name, is_anchor = pool_p1.sample_opponent(latest_model=p1_model, anchor_prob=p2_anchor_prob)
+        if is_anchor:
             for env in p2_envs.envs:
-                set_opponent_policy(env, BuiltinAI())
+                set_opponent_policy(env, anchor_policy)
         else:
             policy = make_opponent_policy(opp)
             for env in p2_envs.envs:
                 set_opponent_policy(env, policy)
         print(
-            f"  [iter {iteration}] p2 vs {opp_name} | builtin={p2_builtin_prob:.0%} pool={p2_pool_prob:.0%}",
+            f"  [iter {iteration}] p2 vs {opp_name} | anchor={p2_anchor_prob:.0%} pool={p2_pool_prob:.0%}",
             flush=True,
         )
         p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
@@ -581,7 +617,7 @@ def main() -> None:
 
     for side, model_path in [("player_1", p1_final), ("player_2", p2_final)]:
         label = "p1" if side == "player_1" else "p2"
-        for opp in ["builtin", "random"]:
+        for opp in [anchor_name, "random"]:
             video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
             _record_video(model_path + ".zip", side, opp, video_path)
             run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
