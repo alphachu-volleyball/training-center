@@ -8,7 +8,6 @@ from collections import deque
 from collections.abc import Callable
 
 import numpy as np
-from pika_zoo.ai import BuiltinAI
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 
@@ -29,13 +28,15 @@ class OpponentPool:
     """PFSP opponent pool with sliding-window win-rate tracking.
 
     Opponent selection:
-    - builtin_prob: probability of choosing builtin AI
+    - anchor_prob: probability of choosing the anchor AI (e.g., builtin, duckll)
     - remaining: PFSP-weighted sampling from pool (lower win-rate = higher weight)
     """
 
-    def __init__(self, pool_dir: str, side: str) -> None:
+    def __init__(self, pool_dir: str, side: str, anchor: AIPolicy | None = None) -> None:
         self.pool_dir = pool_dir
         self.side = side
+        self.anchor = anchor
+        self.anchor_name = type(anchor).__name__ if anchor else "none"
         self.checkpoints: list[str] = []
         self.win_stats: dict[str, deque] = {}
         os.makedirs(pool_dir, exist_ok=True)
@@ -51,13 +52,13 @@ class OpponentPool:
     def sample_opponent(
         self,
         latest_model: PPO,
-        builtin_prob: float = 0.2,
+        anchor_prob: float = 0.2,
     ) -> tuple[AIPolicy | PPO, str, bool]:
-        """Sample an opponent. Returns (policy_or_model, name, is_builtin)."""
+        """Sample an opponent. Returns (policy_or_model, name, is_anchor)."""
         r = random.random()
 
-        if r < builtin_prob:
-            return BuiltinAI(), "builtin", True
+        if r < anchor_prob and self.anchor is not None:
+            return self.anchor, self.anchor_name, True
 
         if not self.checkpoints:
             return latest_model, "latest", False
