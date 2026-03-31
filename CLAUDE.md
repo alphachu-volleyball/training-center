@@ -88,7 +88,7 @@ uv run pytest            # Test
 ```toml
 [project]
 dependencies = [
-  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.3.1",
+  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.4.0",
 ]
 ```
 

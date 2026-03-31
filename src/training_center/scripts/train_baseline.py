@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import wandb
-from pika_zoo.ai import BuiltinAI, RandomAI
+from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
@@ -161,7 +161,7 @@ def main() -> None:
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
-    parser.add_argument("--opponent", default="random", choices=["random", "builtin"])
+    parser.add_argument("--opponent", default="random", help="Opponent: random, builtin, stone, duckll, duckll:N")
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
     parser.add_argument("--resume-steps", action="store_true", help="Continue step count from init-model")
@@ -219,7 +219,17 @@ def main() -> None:
             y_velocity_range=c.noise_y_vel or 0,
         )
 
-    opponent_policy = BuiltinAI() if c.opponent == "builtin" else RandomAI()
+    def _make_opponent(spec: str) -> BuiltinAI | RandomAI | StoneAI | DuckllAI:
+        if spec == "builtin":
+            return BuiltinAI()
+        elif spec == "stone":
+            return StoneAI()
+        elif spec == "duckll" or spec.startswith("duckll:"):
+            preset = int(spec.split(":")[1]) if ":" in spec else None
+            return DuckllAI(preset=preset) if preset is not None else DuckllAI()
+        return RandomAI()
+
+    opponent_policy = _make_opponent(c.opponent)
 
     env = make_vec_env(
         n_envs=c.num_envs,
