@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 
 import numpy as np
@@ -114,19 +114,25 @@ def main() -> None:
     print(f"Matchups: {len(matchups)}, Games per pair: {args.games}, Total: {len(tasks)}")
     print(f"Workers: {n_workers}")
 
-    # Execute all games in parallel
-    print(f"\nPlaying {len(tasks)} games...", flush=True)
+    # Execute all games in parallel with progress reporting
+    total = len(tasks)
+    print(f"\nPlaying {total} games...", flush=True)
+    all_results: list[tuple[str, str, dict] | None] = [None] * total
+
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        all_results = list(
-            executor.map(
-                _play_single_game,
-                [t[0] for t in tasks],
-                [t[1] for t in tasks],
-                [args.simplify_observation] * len(tasks),
-                [args.winning_score] * len(tasks),
-                [t[2] for t in tasks],
-            )
-        )
+        future_to_idx = {}
+        for i, (p1s, p2s, seed) in enumerate(tasks):
+            future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
+            future_to_idx[future] = i
+
+        done = 0
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            all_results[idx] = future.result()
+            done += 1
+            if done % 100 == 0 or done == total:
+                print(f"  {done}/{total} games done", flush=True)
+
     print("All games complete.", flush=True)
 
     # Process results per matchup (order preserved by executor.map)
