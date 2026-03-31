@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 
 import numpy as np
@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--p1", required=True, help="Comma-separated p1 players: random, builtin, or model path")
     parser.add_argument("--p2", required=True, help="Comma-separated p2 players: random, builtin, or model path")
     parser.add_argument("--games", type=int, default=100, help="Games per pair")
-    parser.add_argument("--score", type=int, default=15, help="Winning score")
+    parser.add_argument("--winning-score", type=int, default=5, help="Points to win per game")
     parser.add_argument(
         "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
     )
@@ -102,7 +102,7 @@ def main() -> None:
             "p1_players": p1_specs,
             "p2_players": p2_specs,
             "games_per_pair": args.games,
-            "winning_score": args.score,
+            "winning_score": args.winning_score,
             "seed": args.seed,
             "workers": n_workers,
             **meta,
@@ -114,19 +114,25 @@ def main() -> None:
     print(f"Matchups: {len(matchups)}, Games per pair: {args.games}, Total: {len(tasks)}")
     print(f"Workers: {n_workers}")
 
-    # Execute all games in parallel
-    print(f"\nPlaying {len(tasks)} games...", flush=True)
+    # Execute all games in parallel with progress reporting
+    total = len(tasks)
+    print(f"\nPlaying {total} games...", flush=True)
+    all_results: list[tuple[str, str, dict] | None] = [None] * total
+
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        all_results = list(
-            executor.map(
-                _play_single_game,
-                [t[0] for t in tasks],
-                [t[1] for t in tasks],
-                [args.simplify_observation] * len(tasks),
-                [args.score] * len(tasks),
-                [t[2] for t in tasks],
-            )
-        )
+        future_to_idx = {}
+        for i, (p1s, p2s, seed) in enumerate(tasks):
+            future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
+            future_to_idx[future] = i
+
+        done = 0
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            all_results[idx] = future.result()
+            done += 1
+            if done % 100 == 0 or done == total:
+                print(f"  {done}/{total} games done", flush=True)
+
     print("All games complete.", flush=True)
 
     # Process results per matchup (order preserved by executor.map)
@@ -137,8 +143,10 @@ def main() -> None:
         if p2_name not in elos:
             elos[p2_name] = INITIAL_ELO
 
+    table_rows: list[list] = []
+
     idx = 0
-    for p1_spec, p2_spec, p1_name, p2_name in matchups:
+    for i, (p1_spec, p2_spec, p1_name, p2_name) in enumerate(matchups):
         matchup_results = all_results[idx : idx + args.games]
         idx += args.games
 
@@ -154,61 +162,69 @@ def main() -> None:
             all_scores.append(tuple(data["scores"]))
 
         p2_wins = args.games - p1_wins
-        avg_p1_score = np.mean([s[0] for s in all_scores])
-        avg_p2_score = np.mean([s[1] for s in all_scores])
+        avg_p1_score = float(np.mean([s[0] for s in all_scores]))
+        avg_p2_score = float(np.mean([s[1] for s in all_scores]))
 
         p1_serve = [(server, scorer, dur) for server, scorer, dur in all_rounds_data if server == "player_1"]
         p2_serve = [(server, scorer, dur) for server, scorer, dur in all_rounds_data if server == "player_2"]
         durations = [dur for _, _, dur in all_rounds_data]
 
-        matchup_key = f"{p1_name}_vs_{p2_name}"
         p1_serve_win = sum(1 for _, scorer, _ in p1_serve if scorer == "player_1") if p1_serve else 0
-        p2_receive_win = sum(1 for _, scorer, _ in p1_serve if scorer == "player_2") if p1_serve else 0
         p2_serve_win = sum(1 for _, scorer, _ in p2_serve if scorer == "player_2") if p2_serve else 0
         p1_receive_win = sum(1 for _, scorer, _ in p2_serve if scorer == "player_1") if p2_serve else 0
+        p2_receive_win = sum(1 for _, scorer, _ in p1_serve if scorer == "player_2") if p1_serve else 0
 
-        run.log(
-            {
-                f"{matchup_key}/p1_win_rate": p1_wins / args.games,
-                f"{matchup_key}/p1_avg_score": float(avg_p1_score),
-                f"{matchup_key}/p2_avg_score": float(avg_p2_score),
-                f"{matchup_key}/p1_serve_win_rate": p1_serve_win / max(len(p1_serve), 1),
-                f"{matchup_key}/p1_receive_win_rate": p1_receive_win / max(len(p2_serve), 1),
-                f"{matchup_key}/p2_serve_win_rate": p2_serve_win / max(len(p2_serve), 1),
-                f"{matchup_key}/p2_receive_win_rate": p2_receive_win / max(len(p1_serve), 1),
-                f"{matchup_key}/avg_round_frames": float(np.mean(durations)) if durations else 0,
-                f"{matchup_key}/median_round_frames": float(np.median(durations)) if durations else 0,
-            }
+        table_rows.append(
+            [
+                p1_name,
+                p2_name,
+                p1_wins / args.games,
+                avg_p1_score,
+                avg_p2_score,
+                p1_serve_win / max(len(p1_serve), 1),
+                p1_receive_win / max(len(p2_serve), 1),
+                p2_serve_win / max(len(p2_serve), 1),
+                p2_receive_win / max(len(p1_serve), 1),
+                float(np.mean(durations)) if durations else 0,
+                float(np.median(durations)) if durations else 0,
+            ]
         )
-
-        print(f"\n{'=' * 60}")
-        print(f"  {p1_name} (p1) vs {p2_name} (p2)")
-        print(f"{'=' * 60}")
-        print(f"  Record: p1 {p1_wins}W {p2_wins}L ({p1_wins / args.games * 100:.0f}%)")
-        print(f"  Avg score: p1 {avg_p1_score:.1f} - p2 {avg_p2_score:.1f}")
-
-        if p1_serve:
-            print(
-                f"\n  [p1 serve] p1 wins {p1_serve_win:4d} ({p1_serve_win / len(p1_serve) * 100:5.1f}%)"
-                f"  |  p2 wins {p2_receive_win:4d} ({p2_receive_win / len(p1_serve) * 100:5.1f}%)"
-                f"  |  {len(p1_serve)} rounds"
-            )
-        if p2_serve:
-            print(
-                f"  [p2 serve] p1 wins {p1_receive_win:4d} ({p1_receive_win / len(p2_serve) * 100:5.1f}%)"
-                f"  |  p2 wins {p2_serve_win:4d} ({p2_serve_win / len(p2_serve) * 100:5.1f}%)"
-                f"  |  {len(p2_serve)} rounds"
-            )
 
         print(
-            f"\n  Round frames: mean {np.mean(durations):.0f}"
-            f"  median {np.median(durations):.0f}"
-            f"  range {np.min(durations)}-{np.max(durations)}"
+            f"  [{i + 1}/{len(matchups)}] {p1_name} vs {p2_name}: "
+            f"{p1_wins}W {p2_wins}L ({p1_wins / args.games * 100:.0f}%) "
+            f"score {avg_p1_score:.1f}-{avg_p2_score:.1f} "
+            f"round {np.mean(durations):.0f}f",
+            flush=True,
         )
 
-    # Log final ELO ratings
-    elo_data = {f"elo/{name}": elo for name, elo in elos.items()}
-    run.log(elo_data)
+    # Log matchup results as wandb.Table
+    matchup_table = wandb.Table(
+        columns=[
+            "p1",
+            "p2",
+            "p1_win_rate",
+            "p1_avg_score",
+            "p2_avg_score",
+            "p1_serve_win_rate",
+            "p1_receive_win_rate",
+            "p2_serve_win_rate",
+            "p2_receive_win_rate",
+            "avg_round_frames",
+            "median_round_frames",
+        ],
+        data=table_rows,
+    )
+    run.log({"matchups": matchup_table})
+
+    # Log ELO ratings as wandb.Table and run.summary
+    elo_table = wandb.Table(
+        columns=["agent", "elo"],
+        data=[[name, elo] for name, elo in sorted(elos.items(), key=lambda x: x[1], reverse=True)],
+    )
+    run.log({"elo_ratings": elo_table})
+    for name, elo in elos.items():
+        run.summary[f"elo/{name}"] = elo
 
     print(f"\n{'=' * 60}")
     print("  ELO Ratings")
