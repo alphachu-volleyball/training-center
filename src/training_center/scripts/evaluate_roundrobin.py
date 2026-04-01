@@ -5,8 +5,8 @@ Self-matchups are recorded in the matchup table but excluded from ELO updates.
 Games are executed in parallel using ProcessPoolExecutor.
 
 Usage:
-  uv run evaluate --p1 random,builtin,duckll:0 --p2 random,builtin,duckll:0 --games 100
-  uv run evaluate --p1 random,builtin,duckll:0,duckll:10 --p2 random,builtin,duckll:0,duckll:10 --workers 8
+  uv run evaluate-roundrobin --p1 random,builtin,duckll:0 --p2 random,builtin,duckll:0 --games 100
+  uv run evaluate-roundrobin --p1 random,builtin,duckll:0,duckll:10 --p2 random,builtin,duckll:0,duckll:10 --workers 8
 """
 
 from __future__ import annotations

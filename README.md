@@ -59,7 +59,7 @@ uv run train-baseline --opponent builtin --timesteps 1000000
 uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
 # Round-robin ELO evaluation (p1 pool × p2 pool)
-uv run evaluate --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
+uv run evaluate-roundrobin --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
 ```
 
 ## Training Scripts
@@ -107,13 +107,13 @@ Alternately trains two agents (p1 left, p2 right) against each other and a pool 
 - **PFSP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
 - **Anchor + pool curriculum** — a configurable mix of rule-based anchor AI and pool opponents. Supports fixed ratio, schedule-based, and adaptive (win-rate-based) curricula.
 
-### `evaluate` — Round-robin ELO evaluation
+### `evaluate-roundrobin` — Round-robin ELO evaluation
 
 Standalone evaluation script for comparing any set of models/AIs in a round-robin format.
 
 **Process:**
 
-1. Build cross-product of p1 pool × p2 pool (skip self-play pairs)
+1. Build cross-product of p1 pool × p2 pool (including self-matchups)
 2. Pre-generate all game seeds for deterministic reproducibility
 3. Submit all games to `ProcessPoolExecutor` at once
 4. Collect results, compute per-matchup stats and ELO ratings
