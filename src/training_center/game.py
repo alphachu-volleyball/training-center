@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
@@ -13,6 +15,8 @@ from pika_zoo.wrappers.record_game import RecordGame
 from pika_zoo.wrappers.simplify_action import SimplifyAction
 from pika_zoo.wrappers.simplify_observation import SimplifyObservation
 from stable_baselines3 import PPO
+
+from training_center.model_config import load_model_config
 
 
 class Player:
@@ -42,11 +46,13 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
     Supported specs:
     - 'random', 'builtin', 'stone': built-in AI policies
     - 'duckll' or 'duckll:N': DuckllAI with optional preset level (0-10)
-    - path: SB3 model path (loaded via SB3ModelPolicy)
+    - directory path: loads model.zip + model.json config from inside
+    - .zip file path: loads with default config (legacy compatibility)
 
-    For model paths, ``agent`` determines which side the model was trained on,
-    so that SB3ModelPolicy can correctly map actions and observations.
-    ``simplify_observation`` must match the training-time SimplifyObservation setting.
+    For model paths, ``agent`` determines which side the model was trained on.
+    If a model.json config exists, wrapper settings are loaded from it.
+    Otherwise, defaults are used (action_simplified=True, observation_normalized=True).
+    The ``simplify_observation`` parameter is only used as fallback when no config exists.
     """
     if spec == "random":
         return Player("random", policy=RandomAI())
@@ -60,15 +66,16 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
             return Player(f"duckll:{preset}", policy=DuckllAI(preset=preset))
         return Player("duckll", policy=DuckllAI())
     else:
-        name = spec.rstrip("/").split("/")[-1]
+        zip_path, config = load_model_config(spec)
+        name = Path(spec).name
         return Player(
             name,
             policy=SB3ModelPolicy(
-                model_path=spec,
-                agent=agent,
-                action_simplified=True,
-                observation_simplified=simplify_observation,
-                observation_normalized=True,
+                model_path=zip_path,
+                agent=config.agent if config.agent != "player_1" else agent,
+                action_simplified=config.action_simplified,
+                observation_simplified=config.observation_simplified,
+                observation_normalized=config.observation_normalized,
             ),
         )
 
