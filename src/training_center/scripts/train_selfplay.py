@@ -140,45 +140,20 @@ def evaluate_selfplay_detailed(
     winning_score: int = 15,
     seed: int = 42,
     simplify_observation: bool = False,
-    anchor_name: str = "builtin",
-    executor: ProcessPoolExecutor | None = None,
+    eval_opponents: list[str] | None = None,
 ) -> dict[str, dict]:
-    """Evaluate with detailed stats across 5 matchups (parallel)."""
+    """Evaluate p1/p2 models against each other and eval opponents."""
     rng = np.random.default_rng(seed)
+    opponents = eval_opponents or ["random", "builtin"]
 
-    matchup_defs = [
+    matchup_defs: list[tuple[str, str, str, str]] = [
         ("p1_vs_p2", p1_model_path, p2_model_path, "p1"),
-        ("p1_vs_random", p1_model_path, "random", "p1"),
-        (f"p1_vs_{anchor_name}", p1_model_path, anchor_name, "p1"),
-        ("p2_vs_random", "random", p2_model_path, "p2"),
-        (f"p2_vs_{anchor_name}", anchor_name, p2_model_path, "p2"),
     ]
+    for opp in opponents:
+        matchup_defs.append((f"p1_vs_{opp}", p1_model_path, opp, "p1"))
+        matchup_defs.append((f"p2_vs_{opp}", opp, p2_model_path, "p2"))
 
-    if executor is not None:
-        futures = {}
-        for mname, p1s, p2s, perspective in matchup_defs:
-            matchup_seed = int(rng.integers(0, 2**31))
-            f = executor.submit(
-                _run_matchup_worker,
-                mname,
-                p1s,
-                p2s,
-                games,
-                winning_score,
-                perspective,
-                matchup_seed,
-                simplify_observation,
-            )
-            futures[f] = mname
-
-        matchups: dict[str, dict] = {}
-        for f in as_completed(futures):
-            mname, summary = f.result()
-            matchups[mname] = summary
-        return matchups
-
-    # Fallback: sequential (no executor)
-    matchups = {}
+    matchups: dict[str, dict] = {}
     for mname, p1s, p2s, perspective in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
@@ -329,6 +304,11 @@ def main() -> None:
     parser.add_argument("--eval-freq", type=int, default=10)
     parser.add_argument("--eval-games", type=int, default=10)
     parser.add_argument("--eval-score", type=int, default=5)
+    parser.add_argument(
+        "--eval-opponents",
+        default="random,builtin",
+        help="Comma-separated eval opponents (e.g. random,builtin,duckll:5)",
+    )
     parser.add_argument("--save-dir", required=True)
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--p1-init", default=None)
@@ -389,6 +369,7 @@ def main() -> None:
             "anchor_prob": args.anchor_prob,
             "ent_coef": args.ent_coef,
             "eval_freq": args.eval_freq,
+            "eval_opponents": args.eval_opponents,
             "noise_level": args.noise_level,
             "noise_x": noise.x_range if noise else None,
             "noise_x_vel": noise.x_velocity_range if noise else None,
@@ -528,14 +509,14 @@ def main() -> None:
             p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
             _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
             _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
+            eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
             matchups = evaluate_selfplay_detailed(
                 str(p1_latest_dir),
                 str(p2_latest_dir),
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 simplify_observation=args.simplify_observation,
-                anchor_name=anchor_name,
-                executor=eval_executor,
+                eval_opponents=eval_opps,
             )
 
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
@@ -705,7 +686,7 @@ def main() -> None:
     p2_final_zip = str(p2_final_dir / "model.zip")
     for side, model_zip in [("player_1", p1_final_zip), ("player_2", p2_final_zip)]:
         label = "p1" if side == "player_1" else "p2"
-        for opp in [anchor_name, "random"]:
+        for opp in eval_opps:
             video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
             _record_video(model_zip, side, opp, video_path)
             run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
