@@ -58,6 +58,7 @@ def main() -> None:
     parser.add_argument(
         "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
     )
+    parser.add_argument("--asymmetric", action="store_true", help="Track L/R ELO separately (includes self-matchups)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--workers", type=int, default=None, help="Parallel workers (default: cpu_count)")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
@@ -76,14 +77,21 @@ def main() -> None:
     p1_names = {s: make_player(s, agent="player_1", simplify_observation=so).name for s in p1_specs}
     p2_names = {s: make_player(s, agent="player_2", simplify_observation=so).name for s in p2_specs}
 
-    # Build matchup list (skip self-play)
-    matchups: list[tuple[str, str, str, str]] = []  # (p1_spec, p2_spec, p1_name, p2_name)
+    # Build matchup list
+    asymmetric = args.asymmetric
+    matchups: list[tuple[str, str, str, str]] = []  # (p1_spec, p2_spec, p1_elo_key, p2_elo_key)
     for p1_spec, p2_spec in product(p1_specs, p2_specs):
         p1_name = p1_names[p1_spec]
         p2_name = p2_names[p2_spec]
-        if p1_name == p2_name:
+        if not asymmetric and p1_name == p2_name:
             continue
-        matchups.append((p1_spec, p2_spec, p1_name, p2_name))
+        if asymmetric:
+            p1_elo_key = f"{p1_name} (L)"
+            p2_elo_key = f"{p2_name} (R)"
+        else:
+            p1_elo_key = p1_name
+            p2_elo_key = p2_name
+        matchups.append((p1_spec, p2_spec, p1_elo_key, p2_elo_key))
 
     # Pre-generate all tasks with deterministic seeds
     rng = np.random.default_rng(args.seed)
@@ -104,6 +112,7 @@ def main() -> None:
             "games_per_pair": args.games,
             "winning_score": args.winning_score,
             "seed": args.seed,
+            "asymmetric": asymmetric,
             "workers": n_workers,
             **meta,
         },
@@ -135,18 +144,18 @@ def main() -> None:
 
     print("All games complete.", flush=True)
 
-    # Process results per matchup (order preserved by executor.map)
+    # Process results per matchup (order preserved)
     elos: dict[str, float] = {}
-    for _, _, p1_name, p2_name in matchups:
-        if p1_name not in elos:
-            elos[p1_name] = INITIAL_ELO
-        if p2_name not in elos:
-            elos[p2_name] = INITIAL_ELO
+    for _, _, p1_elo_key, p2_elo_key in matchups:
+        if p1_elo_key not in elos:
+            elos[p1_elo_key] = INITIAL_ELO
+        if p2_elo_key not in elos:
+            elos[p2_elo_key] = INITIAL_ELO
 
     table_rows: list[list] = []
 
     idx = 0
-    for i, (p1_spec, p2_spec, p1_name, p2_name) in enumerate(matchups):
+    for i, (p1_spec, p2_spec, p1_elo_key, p2_elo_key) in enumerate(matchups):
         matchup_results = all_results[idx : idx + args.games]
         idx += args.games
 
@@ -157,7 +166,7 @@ def main() -> None:
         for _, _, data in matchup_results:
             result = 1 if data["winner"] == "player_1" else 0
             p1_wins += result
-            elos[p1_name], elos[p2_name] = update_elo(elos[p1_name], elos[p2_name], result)
+            elos[p1_elo_key], elos[p2_elo_key] = update_elo(elos[p1_elo_key], elos[p2_elo_key], result)
             all_rounds_data.extend(data["rounds"])
             all_scores.append(tuple(data["scores"]))
 
@@ -176,8 +185,8 @@ def main() -> None:
 
         table_rows.append(
             [
-                p1_name,
-                p2_name,
+                p1_elo_key,
+                p2_elo_key,
                 p1_wins / args.games,
                 avg_p1_score,
                 avg_p2_score,
@@ -191,7 +200,7 @@ def main() -> None:
         )
 
         print(
-            f"  [{i + 1}/{len(matchups)}] {p1_name} vs {p2_name}: "
+            f"  [{i + 1}/{len(matchups)}] {p1_elo_key} vs {p2_elo_key}: "
             f"{p1_wins}W {p2_wins}L ({p1_wins / args.games * 100:.0f}%) "
             f"score {avg_p1_score:.1f}-{avg_p2_score:.1f} "
             f"round {np.mean(durations):.0f}f",
