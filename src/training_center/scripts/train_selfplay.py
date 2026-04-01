@@ -562,6 +562,22 @@ def main() -> None:
                     log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
                     log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
 
+            # Compute ELO for p1 and p2
+            from training_center.elo import INITIAL_ELO, update_elo
+
+            for side_label in ["p1", "p2"]:
+                elo = INITIAL_ELO
+                for match, s in matchups.items():
+                    if match.startswith(f"{side_label}_vs_") and match != "p1_vs_p2":
+                        opp_elo = INITIAL_ELO
+                        wins = s["wins"]
+                        losses = s["losses"]
+                        for _ in range(wins):
+                            elo, opp_elo = update_elo(elo, opp_elo, 1)
+                        for _ in range(losses):
+                            elo, opp_elo = update_elo(elo, opp_elo, 0)
+                log_data[f"{side_label}/eval/elo"] = elo
+
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(
                 str(p1_latest_dir),
