@@ -142,7 +142,7 @@ class EvalCallback(BaseCallback):
             wandb.run.log_artifact(artifact)
 
             # Evaluate against each opponent in parallel
-            model_side = self.model_config.agent
+            model_side = self.model_config.side
             so = self.model_config.observation_simplified
             rng = np.random.default_rng()
 
@@ -324,7 +324,7 @@ def main() -> None:
         model = PPO("MlpPolicy", env, verbose=1, seed=c.seed, device="cpu")
 
     model_cfg = ModelConfig(
-        agent=c.side,
+        side=c.side,
         action_simplified=True,
         observation_simplified=c.simplify_observation,
         observation_normalized=True,

@@ -72,7 +72,7 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
             name,
             policy=SB3ModelPolicy(
                 model_path=zip_path,
-                agent=config.agent if config.agent != "player_1" else agent,
+                agent=agent if config.side == "both" else config.side,
                 action_simplified=config.action_simplified,
                 observation_simplified=config.observation_simplified,
                 observation_normalized=config.observation_normalized,

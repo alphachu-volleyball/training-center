@@ -476,8 +476,8 @@ def main() -> None:
     )
 
     # Model configs
-    p1_cfg = ModelConfig(agent="player_1", observation_simplified=args.simplify_observation)
-    p2_cfg = ModelConfig(agent="player_2", observation_simplified=args.simplify_observation)
+    p1_cfg = ModelConfig(side="player_1", observation_simplified=args.simplify_observation)
+    p2_cfg = ModelConfig(side="player_2", observation_simplified=args.simplify_observation)
 
     # Initialize models
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)

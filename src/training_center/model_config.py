@@ -24,7 +24,7 @@ MODEL_CONFIG_NAME = "model.json"
 class ModelConfig:
     """Wrapper chain configuration for an SB3 model."""
 
-    agent: str = "player_1"
+    side: str = "player_1"
     action_simplified: bool = True
     observation_simplified: bool = False
     observation_normalized: bool = True
@@ -40,8 +40,8 @@ class ModelConfig:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
     @classmethod
-    def default(cls, agent: str = "player_1") -> ModelConfig:
-        return cls(agent=agent)
+    def default(cls) -> ModelConfig:
+        return cls()
 
 
 def save_model(model: PPO, save_dir: str | Path, config: ModelConfig) -> Path:
