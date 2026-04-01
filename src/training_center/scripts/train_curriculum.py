@@ -123,9 +123,15 @@ def _record_video(model_path: str, side: str, opponent: str, output_path: str) -
 
 def main() -> None:
     ensure_stack_size()
-    parser = argparse.ArgumentParser(description="Curriculum training: progressive difficulty")
-    parser.add_argument("--total-iterations", type=int, default=200)
-    parser.add_argument("--steps-per-iter", type=int, default=20000)
+
+    ladder_str = " → ".join(CURRICULUM_LADDER)
+    parser = argparse.ArgumentParser(
+        description="Curriculum training: progressive difficulty",
+        epilog=f"Difficulty ladder (ELO order from experiment 009):\n  {ladder_str}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--total-iterations", type=int, default=50)
+    parser.add_argument("--steps-per-iter", type=int, default=1_000_000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
     parser.add_argument("--seed", type=int, default=0)
@@ -136,7 +142,7 @@ def main() -> None:
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
-    parser.add_argument("--unlock-threshold", type=float, default=0.7, help="Min win rate to unlock next opponent")
+    parser.add_argument("--unlock-threshold", type=float, default=0.75, help="Min win rate to unlock next opponent")
     parser.add_argument("--initial-unlocked", type=int, default=3, help="Number of opponents unlocked at start")
     parser.add_argument("--eval-freq", type=int, default=5, help="Evaluate every N iterations")
     parser.add_argument("--eval-games", type=int, default=10, help="Games per opponent per evaluation")
