@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import platform
+import resource
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +16,21 @@ from pika_zoo.wrappers.reward_shaping import RewardShaping
 from pika_zoo.wrappers.simplify_action import SimplifyAction
 from pika_zoo.wrappers.simplify_observation import SimplifyObservation
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
+
+# DuckllAI's ball prediction can exhaust the default 8MB stack in
+# forkserver / SubprocVecEnv workers on Linux.  Raising the soft limit
+# early in the main process ensures every child inherits a larger stack.
+_STACK_SIZE = 64 * 1024 * 1024  # 64 MB
+
+
+def ensure_stack_size(size: int = _STACK_SIZE) -> None:
+    """Raise the process stack soft limit if below *size* (Linux only)."""
+    if platform.system() != "Linux":
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    if soft < size:
+        new_hard = hard if hard == -1 else max(hard, size)
+        resource.setrlimit(resource.RLIMIT_STACK, (size, new_hard))
 
 
 def make_env(

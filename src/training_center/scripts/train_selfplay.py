@@ -26,7 +26,7 @@ from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
-from training_center.env_factory import make_vec_env, set_opponent_policy
+from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
@@ -284,6 +284,7 @@ def _update_pool_stats(
 
 
 def main() -> None:
+    ensure_stack_size()
     parser = argparse.ArgumentParser(description="Self-play training (PFSP + builtin anchor)")
     parser.add_argument("--total-iterations", type=int, default=100)
     parser.add_argument("--steps-per-iter", type=int, default=20000)
