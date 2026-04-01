@@ -127,7 +127,11 @@ def main() -> None:
     ladder_str = " → ".join(CURRICULUM_LADDER)
     parser = argparse.ArgumentParser(
         description="Curriculum training: progressive difficulty",
-        epilog=f"Difficulty ladder (ELO order from experiment 009):\n  {ladder_str}",
+        epilog=(
+            f"Difficulty ladder (ELO order):\n"
+            f"  {ladder_str}\n"
+            f"  Source: https://api.wandb.ai/links/ootzk/8za7h3er"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--total-iterations", type=int, default=50)
