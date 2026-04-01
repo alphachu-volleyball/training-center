@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 train-baseline = "training_center.scripts.train_baseline:main"
 train-selfplay = "training_center.scripts.train_selfplay:main"
+train-curriculum = "training_center.scripts.train_curriculum:main"
 evaluate-roundrobin = "training_center.scripts.evaluate_roundrobin:main"
 
 [build-system]
