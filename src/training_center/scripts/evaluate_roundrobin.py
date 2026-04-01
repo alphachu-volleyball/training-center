@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
@@ -123,7 +124,8 @@ def main() -> None:
     print(f"\nPlaying {total} games...", flush=True)
     all_results: list[tuple[str, str, dict] | None] = [None] * total
 
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+    mp_context = multiprocessing.get_context("forkserver")
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_context) as executor:
         future_to_idx = {}
         for i, (p1s, p2s, seed) in enumerate(tasks):
             future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
