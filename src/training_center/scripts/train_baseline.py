@@ -240,6 +240,11 @@ def main() -> None:
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument("--opponent", default="random", help="Opponent: random, builtin, stone, duckll, duckll:N")
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
+    parser.add_argument(
+        "--eval-opponents",
+        default="random,builtin",
+        help="Comma-separated eval opponents (e.g. random,builtin,duckll:5)",
+    )
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
     parser.add_argument("--resume-steps", action="store_true", help="Continue step count from init-model")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
@@ -269,6 +274,7 @@ def main() -> None:
             "simplify_observation": args.simplify_observation,
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
+            "eval_opponents": args.eval_opponents,
             **meta,
         },
     )
@@ -342,6 +348,7 @@ def main() -> None:
                 eval_freq=c.eval_freq // c.num_envs,
                 save_path=save_path,
                 model_config=model_cfg,
+                eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
                 executor=eval_executor,
             )
         )
