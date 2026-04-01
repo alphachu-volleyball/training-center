@@ -175,6 +175,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 - Each card includes: Purpose/Hypothesis, Config/Design, Results, W&B link, Related experiments
 - Sweeps are distinguished by their W&B sweep URL (vs run URL)
 - `pika-zoo version` field tracks which env version the experiment ran on
+- Assign experiment number (`NNN:` prefix) when moving from **Idea → Ready**
 
 ## Experiment Tracking
 
