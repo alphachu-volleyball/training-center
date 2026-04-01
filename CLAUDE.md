@@ -34,11 +34,12 @@ src/training_center/
 ├── game.py                     # Player, play_game, make_player
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
 ├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
+├── model_config.py             # Model wrapper config (save/load alongside model.zip)
 ├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
 └── scripts/
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
-    └── evaluate.py             # Round-robin ELO evaluation (p1 pool × p2 pool)
+    └── evaluate_roundrobin.py  # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
 
 ### CLI Commands
@@ -175,6 +176,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 - Each card includes: Purpose/Hypothesis, Config/Design, Results, W&B link, Related experiments
 - Sweeps are distinguished by their W&B sweep URL (vs run URL)
 - `pika-zoo version` field tracks which env version the experiment ran on
+- Assign experiment number (`NNN:` prefix) when moving from **Idea → Ready**
 
 ## Experiment Tracking
 
