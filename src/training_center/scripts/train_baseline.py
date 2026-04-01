@@ -367,7 +367,8 @@ def main() -> None:
     run.log_artifact(artifact)
 
     # Record sample videos
-    for opp in ["builtin", "random"]:
+    eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
+    for opp in eval_opps:
         video_path = str(save_path.parent / f"vs_{opp}.mp4")
         _record_video(model_zip, c.side, opp, video_path)
         run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
