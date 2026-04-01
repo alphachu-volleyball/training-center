@@ -22,7 +22,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.elo import INITIAL_ELO, update_elo
-from training_center.env_factory import make_vec_env
+from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
@@ -225,6 +225,7 @@ class EvalCallback(BaseCallback):
 
 
 def main() -> None:
+    ensure_stack_size()
     parser = argparse.ArgumentParser(description="Baseline PPO training against a fixed opponent")
     parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument("--num-envs", type=int, default=8)
@@ -367,7 +368,8 @@ def main() -> None:
     run.log_artifact(artifact)
 
     # Record sample videos
-    for opp in ["builtin", "random"]:
+    eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
+    for opp in eval_opps:
         video_path = str(save_path.parent / f"vs_{opp}.mp4")
         _record_video(model_zip, c.side, opp, video_path)
         run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
