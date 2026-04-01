@@ -98,7 +98,12 @@ def _eval_matchup_worker(
             episode = play_game(opp_player, model_player, winning_score=winning_score, seed=game_seed)
         all_episodes.append(episode)
 
+    opp_side = "player_2" if model_side == "player_1" else "player_1"
     model_idx = 0 if model_side == "player_1" else 1
+    all_rounds = [r for e in all_episodes for r in e.rounds]
+    model_serve = [r for r in all_rounds if r.server == model_side]
+    opp_serve = [r for r in all_rounds if r.server == opp_side]
+
     wins = sum(1 for e in all_episodes if e.winner == model_side)
     detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
 
@@ -107,6 +112,12 @@ def _eval_matchup_worker(
         "losses": games - wins,
         "win_rate": wins / games,
         "avg_score": float(np.mean([e.scores[model_idx] for e in all_episodes])),
+        "serve_win_rate": (sum(1 for r in model_serve if r.scorer == model_side) / len(model_serve))
+        if model_serve
+        else None,
+        "receive_win_rate": (sum(1 for r in opp_serve if r.scorer == model_side) / len(opp_serve))
+        if opp_serve
+        else None,
         "game_winners": [e.winner for e in all_episodes],
         **detail,
     }
@@ -272,6 +283,8 @@ def main() -> None:
                 log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
                 log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
                 for k in [
+                    "serve_win_rate",
+                    "receive_win_rate",
                     "avg_round_frames",
                     "std_round_frames",
                     "action_entropy",
