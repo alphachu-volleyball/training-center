@@ -11,7 +11,6 @@ import random
 from collections import deque
 
 PFSP_WINDOW = 30
-MIN_SAMPLES_FOR_UNLOCK = 5
 
 
 class CurriculumPool:
@@ -45,7 +44,7 @@ class CurriculumPool:
 
         for name in self.unlocked:
             stats = self.win_stats.get(name)
-            if not stats or len(stats) < MIN_SAMPLES_FOR_UNLOCK:
+            if not stats:
                 return None
             if self.get_win_rate(name) < self.unlock_threshold:
                 return None
