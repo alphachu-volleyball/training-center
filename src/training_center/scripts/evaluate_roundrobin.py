@@ -1,10 +1,11 @@
 """Round-robin evaluation script (ELO + detailed stats).
 
-Cross-product of p1 pool × p2 pool. Each model is evaluated on its training side.
+Cross-product of p1 pool × p2 pool, including self-matchups.
+Self-matchups are recorded in the matchup table but excluded from ELO updates.
 Games are executed in parallel using ProcessPoolExecutor.
 
 Usage:
-  uv run evaluate --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
+  uv run evaluate --p1 random,builtin,duckll:0 --p2 random,builtin,duckll:0 --games 100
   uv run evaluate --p1 random,builtin,duckll:0,duckll:10 --p2 random,builtin,duckll:0,duckll:10 --workers 8
 """
 
@@ -58,7 +59,6 @@ def main() -> None:
     parser.add_argument(
         "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
     )
-    parser.add_argument("--asymmetric", action="store_true", help="Track L/R ELO separately (includes self-matchups)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--workers", type=int, default=None, help="Parallel workers (default: cpu_count)")
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
@@ -77,26 +77,21 @@ def main() -> None:
     p1_names = {s: make_player(s, agent="player_1", simplify_observation=so).name for s in p1_specs}
     p2_names = {s: make_player(s, agent="player_2", simplify_observation=so).name for s in p2_specs}
 
-    # Build matchup list
-    asymmetric = args.asymmetric
-    matchups: list[tuple[str, str, str, str]] = []  # (p1_spec, p2_spec, p1_elo_key, p2_elo_key)
+    # Build matchup list (including self-matchups)
+    matchups: list[tuple[str, str, str, str, bool]] = []  # (p1_spec, p2_spec, p1_name, p2_name, is_self)
     for p1_spec, p2_spec in product(p1_specs, p2_specs):
         p1_name = p1_names[p1_spec]
         p2_name = p2_names[p2_spec]
-        if not asymmetric and p1_name == p2_name:
-            continue
-        if asymmetric:
-            p1_elo_key = f"{p1_name} (L)"
-            p2_elo_key = f"{p2_name} (R)"
-        else:
-            p1_elo_key = p1_name
-            p2_elo_key = p2_name
-        matchups.append((p1_spec, p2_spec, p1_elo_key, p2_elo_key))
+        is_self = p1_name == p2_name
+        matchups.append((p1_spec, p2_spec, p1_name, p2_name, is_self))
+
+    n_self = sum(1 for *_, s in matchups if s)
+    n_cross = len(matchups) - n_self
 
     # Pre-generate all tasks with deterministic seeds
     rng = np.random.default_rng(args.seed)
     tasks: list[tuple[str, str, int]] = []
-    for p1_spec, p2_spec, _, _ in matchups:
+    for p1_spec, p2_spec, _, _, _ in matchups:
         for _ in range(args.games):
             game_seed = int(rng.integers(0, 2**31))
             tasks.append((p1_spec, p2_spec, game_seed))
@@ -106,13 +101,12 @@ def main() -> None:
         project=args.wandb_project,
         name=args.wandb_run_name,
         config={
-            "script": "evaluate",
+            "script": "evaluate_roundrobin",
             "p1_players": p1_specs,
             "p2_players": p2_specs,
             "games_per_pair": args.games,
             "winning_score": args.winning_score,
             "seed": args.seed,
-            "asymmetric": asymmetric,
             "workers": n_workers,
             **meta,
         },
@@ -120,7 +114,8 @@ def main() -> None:
 
     print(f"P1 players: {list(p1_names.values())}")
     print(f"P2 players: {list(p2_names.values())}")
-    print(f"Matchups: {len(matchups)}, Games per pair: {args.games}, Total: {len(tasks)}")
+    print(f"Matchups: {len(matchups)} ({n_cross} cross + {n_self} self)")
+    print(f"Games per pair: {args.games}, Total: {len(tasks)}")
     print(f"Workers: {n_workers}")
 
     # Execute all games in parallel with progress reporting
@@ -144,18 +139,18 @@ def main() -> None:
 
     print("All games complete.", flush=True)
 
-    # Process results per matchup (order preserved)
+    # Process results per matchup
     elos: dict[str, float] = {}
-    for _, _, p1_elo_key, p2_elo_key in matchups:
-        if p1_elo_key not in elos:
-            elos[p1_elo_key] = INITIAL_ELO
-        if p2_elo_key not in elos:
-            elos[p2_elo_key] = INITIAL_ELO
+    for _, _, p1_name, p2_name, _ in matchups:
+        if p1_name not in elos:
+            elos[p1_name] = INITIAL_ELO
+        if p2_name not in elos:
+            elos[p2_name] = INITIAL_ELO
 
     table_rows: list[list] = []
 
     idx = 0
-    for i, (p1_spec, p2_spec, p1_elo_key, p2_elo_key) in enumerate(matchups):
+    for i, (p1_spec, p2_spec, p1_name, p2_name, is_self) in enumerate(matchups):
         matchup_results = all_results[idx : idx + args.games]
         idx += args.games
 
@@ -166,7 +161,9 @@ def main() -> None:
         for _, _, data in matchup_results:
             result = 1 if data["winner"] == "player_1" else 0
             p1_wins += result
-            elos[p1_elo_key], elos[p2_elo_key] = update_elo(elos[p1_elo_key], elos[p2_elo_key], result)
+            # Skip ELO update for self-matchups (would only add noise)
+            if not is_self:
+                elos[p1_name], elos[p2_name] = update_elo(elos[p1_name], elos[p2_name], result)
             all_rounds_data.extend(data["rounds"])
             all_scores.append(tuple(data["scores"]))
 
@@ -183,10 +180,12 @@ def main() -> None:
         p1_receive_win = sum(1 for _, scorer, _ in p2_serve if scorer == "player_1") if p2_serve else 0
         p2_receive_win = sum(1 for _, scorer, _ in p1_serve if scorer == "player_2") if p1_serve else 0
 
+        self_tag = " [self]" if is_self else ""
         table_rows.append(
             [
-                p1_elo_key,
-                p2_elo_key,
+                p1_name,
+                p2_name,
+                is_self,
                 p1_wins / args.games,
                 avg_p1_score,
                 avg_p2_score,
@@ -200,7 +199,7 @@ def main() -> None:
         )
 
         print(
-            f"  [{i + 1}/{len(matchups)}] {p1_elo_key} vs {p2_elo_key}: "
+            f"  [{i + 1}/{len(matchups)}] {p1_name} vs {p2_name}{self_tag}: "
             f"{p1_wins}W {p2_wins}L ({p1_wins / args.games * 100:.0f}%) "
             f"score {avg_p1_score:.1f}-{avg_p2_score:.1f} "
             f"round {np.mean(durations):.0f}f",
@@ -212,6 +211,7 @@ def main() -> None:
         columns=[
             "p1",
             "p2",
+            "is_self",
             "p1_win_rate",
             "p1_avg_score",
             "p2_avg_score",

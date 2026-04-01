@@ -46,7 +46,7 @@ src/training_center/
 ```bash
 uv run train-baseline         # Baseline PPO training (fixed opponent)
 uv run train-selfplay         # Self-play training (PFSP + curriculum)
-uv run evaluate               # Round-robin ELO evaluation
+uv run evaluate-roundrobin    # Round-robin ELO evaluation
 ```
 
 ### Wrapper Chain
