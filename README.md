@@ -163,7 +163,7 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 #### Baseline Evaluation (`eval/vs_{opp}/`)
 
 Model is always evaluated on its **training side** (`--side`).
-`{opp}`: `random`, `builtin`
+`{opp}`: `random`, `builtin` (or any AI: `stone`, `duckll:N`)
 
 | Metric | Range | Description |
 |--------|-------|-------------|
@@ -200,7 +200,7 @@ p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
 | `{p1,p2}/eval/vs_{opp}/receive_avg_round_frames` | Mean round frames when opponent serves |
 | `{p1,p2}/pfsp/avg_pool_win_rate` | Average win rate against PFSP pool |
 | `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
-| `{p1,p2}/curriculum/builtin_prob` | Current builtin AI sampling probability |
+| `{p1,p2}/curriculum/anchor_prob` | Current anchor AI sampling probability |
 
 #### Training Metrics (SB3 PPO)
 
