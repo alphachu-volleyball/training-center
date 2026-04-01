@@ -179,8 +179,6 @@ def _summarize(
 ) -> dict:
     """Aggregate statistics over multiple games."""
     model_side = "player_1" if perspective == "p1" else "player_2"
-    model_serve = [r for r in rounds if r.server == model_side]
-    opp_serve = [r for r in rounds if r.server != model_side]
 
     if perspective == "p1":
         avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
@@ -197,8 +195,6 @@ def _summarize(
         "win_rate": wins / games,
         "avg_score": avg_score,
         "avg_opp_score": avg_opp_score,
-        "serve_win_rate": sum(1 for r in model_serve if r.scorer == model_side) / max(len(model_serve), 1),
-        "receive_win_rate": sum(1 for r in opp_serve if r.scorer == model_side) / max(len(opp_serve), 1),
         **detail,
     }
 

@@ -58,6 +58,9 @@ uv run train-baseline --opponent builtin --timesteps 1000000
 # Self-play training with PFSP
 uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
+# Curriculum training (progressive difficulty)
+uv run train-curriculum --save-dir experiments/010 --total-iterations 200
+
 # Round-robin ELO evaluation (p1 pool × p2 pool)
 uv run evaluate-roundrobin --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
 ```
@@ -106,6 +109,27 @@ Alternately trains two agents (p1 left, p2 right) against each other and a pool 
 - **Parallel evaluation** — the evaluation phase (matchups + PFSP pool stats) is fully parallelized with `ProcessPoolExecutor`. Workers receive model paths, reconstruct players internally, and return serializable results. This avoids the main bottleneck as pools grow (20+ checkpoints × 10 games each).
 - **PFSP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
 - **Anchor + pool curriculum** — a configurable mix of rule-based anchor AI and pool opponents. Supports fixed ratio, schedule-based, and adaptive (win-rate-based) curricula.
+
+### `train-curriculum` — Progressive difficulty curriculum training
+
+Trains a single agent against a ladder of increasingly difficult rule-based AIs. Opponents are unlocked as the model masters the current pool.
+
+**Process:**
+
+1. Create `DummyVecEnv` (opponent swapping requires in-process access)
+2. Initialize PPO with first few opponents unlocked (stone, random, duckll:1)
+3. For each iteration:
+   - **Evaluate** (every `--eval-freq` iters): play against all unlocked opponents in parallel
+   - **Unlock**: if min win rate across pool >= `--unlock-threshold`, unlock next opponent
+   - **Train**: PFSP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
+4. Saves final model + records sample videos vs all unlocked opponents
+
+**Key design decisions:**
+
+- **CurriculumPool** (not OpponentPool) — manages named AI specs (strings) instead of model checkpoint files. Uses same PFSP weighting formula (`1.0 - win_rate + 0.1`).
+- **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
+- **No ELO tracking** — pool composition changes on unlock, making ELO scale unstable. Use `evaluate-roundrobin` after training for absolute ELO measurement.
+- **DummyVecEnv** — same reasoning as selfplay: opponent swapping via `set_opponent_policy()`.
 
 ### `evaluate-roundrobin` — Round-robin ELO evaluation
 

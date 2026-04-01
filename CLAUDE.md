@@ -36,9 +36,11 @@ src/training_center/
 ├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
 ├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
+├── curriculum_pool.py          # Curriculum pool with unlock-gated difficulty ladder
 └── scripts/
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
+    ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
     └── evaluate_roundrobin.py  # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
 
@@ -47,6 +49,7 @@ src/training_center/
 ```bash
 uv run train-baseline         # Baseline PPO training (fixed opponent)
 uv run train-selfplay         # Self-play training (PFSP + curriculum)
+uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 ```
 
