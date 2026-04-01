@@ -8,8 +8,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -119,7 +117,6 @@ class EvalCallback(BaseCallback):
         model_config: ModelConfig,
         eval_games: int = 20,
         eval_opponents: list[str] | None = None,
-        executor: ProcessPoolExecutor | None = None,
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
@@ -128,7 +125,6 @@ class EvalCallback(BaseCallback):
         self.model_config = model_config
         self.eval_games = eval_games
         self.eval_opponents = eval_opponents or ["random", "builtin"]
-        self.executor = executor
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
@@ -141,45 +137,24 @@ class EvalCallback(BaseCallback):
             artifact.add_dir(str(ckpt_dir))
             wandb.run.log_artifact(artifact)
 
-            # Evaluate against each opponent in parallel
+            # Evaluate against each opponent
             model_side = self.model_config.side
             so = self.model_config.observation_simplified
             rng = np.random.default_rng()
 
-            if self.executor is not None:
-                futures = {}
-                for opp_name in self.eval_opponents:
-                    seed = int(rng.integers(0, 2**31))
-                    f = self.executor.submit(
-                        _eval_matchup_worker,
-                        model_path,
-                        model_side,
-                        opp_name,
-                        self.eval_games,
-                        5,
-                        so,
-                        seed,
-                    )
-                    futures[f] = opp_name
-
-                results: dict[str, dict] = {}
-                for f in as_completed(futures):
-                    opp_name, result = f.result()
-                    results[opp_name] = result
-            else:
-                results = {}
-                for opp_name in self.eval_opponents:
-                    seed = int(rng.integers(0, 2**31))
-                    _, result = _eval_matchup_worker(
-                        model_path,
-                        model_side,
-                        opp_name,
-                        self.eval_games,
-                        5,
-                        so,
-                        seed,
-                    )
-                    results[opp_name] = result
+            results: dict[str, dict] = {}
+            for opp_name in self.eval_opponents:
+                seed = int(rng.integers(0, 2**31))
+                _, result = _eval_matchup_worker(
+                    model_path,
+                    model_side,
+                    opp_name,
+                    self.eval_games,
+                    5,
+                    so,
+                    seed,
+                )
+                results[opp_name] = result
 
             # Compute ELO and log
             elo = INITIAL_ELO
@@ -330,8 +305,6 @@ def main() -> None:
         observation_normalized=True,
     )
 
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count()) if c.eval_freq > 0 else None
-
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,14 +313,10 @@ def main() -> None:
                 eval_freq=c.eval_freq // c.num_envs,
                 save_path=save_path,
                 model_config=model_cfg,
-                executor=eval_executor,
             )
         )
 
     model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
-
-    if eval_executor is not None:
-        eval_executor.shutdown()
 
     save_dir = save_model(model, save_path, model_cfg)
     print(f"\nModel saved to {save_dir}")
