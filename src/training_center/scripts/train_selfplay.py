@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -140,9 +138,8 @@ def evaluate_selfplay_detailed(
     seed: int = 42,
     simplify_observation: bool = False,
     anchor_name: str = "builtin",
-    executor: ProcessPoolExecutor | None = None,
 ) -> dict[str, dict]:
-    """Evaluate with detailed stats across 5 matchups (parallel)."""
+    """Evaluate with detailed stats across 5 matchups."""
     rng = np.random.default_rng(seed)
 
     matchup_defs = [
@@ -153,31 +150,7 @@ def evaluate_selfplay_detailed(
         (f"p2_vs_{anchor_name}", anchor_name, p2_model_path, "p2"),
     ]
 
-    if executor is not None:
-        futures = {}
-        for mname, p1s, p2s, perspective in matchup_defs:
-            matchup_seed = int(rng.integers(0, 2**31))
-            f = executor.submit(
-                _run_matchup_worker,
-                mname,
-                p1s,
-                p2s,
-                games,
-                winning_score,
-                perspective,
-                matchup_seed,
-                simplify_observation,
-            )
-            futures[f] = mname
-
-        matchups: dict[str, dict] = {}
-        for f in as_completed(futures):
-            mname, summary = f.result()
-            matchups[mname] = summary
-        return matchups
-
-    # Fallback: sequential (no executor)
-    matchups = {}
+    matchups: dict[str, dict] = {}
     for mname, p1s, p2s, perspective in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
@@ -235,9 +208,8 @@ def _update_pool_stats(
     winning_score: int = 15,
     max_eval: int = 20,
     simplify_observation: bool = False,
-    executor: ProcessPoolExecutor | None = None,
 ) -> dict | None:
-    """Play current model vs pool checkpoints to update PFSP win-rates (parallel)."""
+    """Play current model vs pool checkpoints to update PFSP win-rates."""
     if not pool.checkpoints:
         return None
 
@@ -251,46 +223,19 @@ def _update_pool_stats(
     print(f"  [PFSP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
 
     rng = np.random.default_rng()
-    checkpoint_seeds = {path: int(rng.integers(0, 2**31)) for path in checkpoints}
-
-    if executor is not None:
-        futures = {}
-        for path in checkpoints:
-            f = executor.submit(
-                _eval_checkpoint_worker,
-                model_path,
-                path,
-                side,
-                games,
-                winning_score,
-                simplify_observation,
-                checkpoint_seeds[path],
-            )
-            futures[f] = path
-
-        results: dict[str, list[bool]] = {}
-        for f in as_completed(futures):
-            name, wins = f.result()
-            results[name] = wins
-    else:
-        results = {}
-        for path in checkpoints:
-            name, wins = _eval_checkpoint_worker(
-                model_path,
-                path,
-                side,
-                games,
-                winning_score,
-                simplify_observation,
-                checkpoint_seeds[path],
-            )
-            results[name] = wins
-
-    # Apply results to pool (main process only)
     win_rates = []
     for path in checkpoints:
         name = Path(path).name
-        wins_list = results[name]
+        seed = int(rng.integers(0, 2**31))
+        _, wins_list = _eval_checkpoint_worker(
+            model_path,
+            path,
+            side,
+            games,
+            winning_score,
+            simplify_observation,
+            seed,
+        )
         for won in wins_list:
             pool.update_stats(name, won)
 
@@ -497,11 +442,8 @@ def main() -> None:
     pool_p1 = OpponentPool(str(save_dir / "p1"), "p1", anchor=anchor_policy)
     pool_p2 = OpponentPool(str(save_dir / "p2"), "p2", anchor=anchor_policy)
 
-    eval_workers = os.cpu_count()
-    eval_executor = ProcessPoolExecutor(max_workers=eval_workers)
-
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
-    print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
+    print(f"Envs: {args.num_envs} (DummyVecEnv)")
     if adaptive_config:
         first, last = adaptive_config["thresholds"][0], adaptive_config["thresholds"][-1]
         print(
@@ -533,7 +475,6 @@ def main() -> None:
                 winning_score=args.eval_score,
                 simplify_observation=args.simplify_observation,
                 anchor_name=anchor_name,
-                executor=eval_executor,
             )
 
             print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
@@ -588,7 +529,6 @@ def main() -> None:
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
                 simplify_observation=args.simplify_observation,
-                executor=eval_executor,
             )
             p2_pfsp = _update_pool_stats(
                 str(p2_latest_dir),
@@ -598,7 +538,6 @@ def main() -> None:
                 winning_score=args.eval_score,
                 max_eval=args.pfsp_eval_max,
                 simplify_observation=args.simplify_observation,
-                executor=eval_executor,
             )
             if p1_pfsp:
                 log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
@@ -715,7 +654,6 @@ def main() -> None:
 
     print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
 
-    eval_executor.shutdown()
     p1_envs.close()
     p2_envs.close()
     run.finish()
