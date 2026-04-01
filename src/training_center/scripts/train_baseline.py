@@ -25,6 +25,7 @@ from training_center.env_factory import make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
+from training_center.model_config import ModelConfig, save_model
 
 
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
@@ -115,35 +116,34 @@ class EvalCallback(BaseCallback):
         self,
         eval_freq: int,
         save_path: Path,
-        side: str = "player_1",
+        model_config: ModelConfig,
         eval_games: int = 20,
         eval_opponents: list[str] | None = None,
-        simplify_observation: bool = False,
         executor: ProcessPoolExecutor | None = None,
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
         self.eval_freq = eval_freq
         self.save_path = save_path
-        self.side = side
+        self.model_config = model_config
         self.eval_games = eval_games
         self.eval_opponents = eval_opponents or ["random", "builtin"]
-        self.simplify_observation = simplify_observation
         self.executor = executor
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq == 0:
             # Save checkpoint
-            ckpt_path = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
-            self.model.save(str(ckpt_path))
-            model_path = str(ckpt_path) + ".zip"
+            ckpt_dir = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+            save_model(self.model, ckpt_dir, self.model_config)
+            model_path = str(ckpt_dir / "model.zip")
 
             artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
-            artifact.add_file(model_path)
+            artifact.add_dir(str(ckpt_dir))
             wandb.run.log_artifact(artifact)
 
             # Evaluate against each opponent in parallel
-            model_side = self.side
+            model_side = self.model_config.side
+            so = self.model_config.observation_simplified
             rng = np.random.default_rng()
 
             if self.executor is not None:
@@ -157,7 +157,7 @@ class EvalCallback(BaseCallback):
                         opp_name,
                         self.eval_games,
                         5,
-                        self.simplify_observation,
+                        so,
                         seed,
                     )
                     futures[f] = opp_name
@@ -176,7 +176,7 @@ class EvalCallback(BaseCallback):
                         opp_name,
                         self.eval_games,
                         5,
-                        self.simplify_observation,
+                        so,
                         seed,
                     )
                     results[opp_name] = result
@@ -323,6 +323,13 @@ def main() -> None:
     else:
         model = PPO("MlpPolicy", env, verbose=1, seed=c.seed, device="cpu")
 
+    model_cfg = ModelConfig(
+        side=c.side,
+        action_simplified=True,
+        observation_simplified=c.simplify_observation,
+        observation_normalized=True,
+    )
+
     eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count()) if c.eval_freq > 0 else None
 
     callbacks = [WandbMetricsCallback()]
@@ -332,8 +339,7 @@ def main() -> None:
             EvalCallback(
                 eval_freq=c.eval_freq // c.num_envs,
                 save_path=save_path,
-                side=c.side,
-                simplify_observation=c.simplify_observation,
+                model_config=model_cfg,
                 executor=eval_executor,
             )
         )
@@ -343,13 +349,12 @@ def main() -> None:
     if eval_executor is not None:
         eval_executor.shutdown()
 
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    model.save(str(save_path))
-    print(f"\nModel saved to {save_path}")
+    save_dir = save_model(model, save_path, model_cfg)
+    print(f"\nModel saved to {save_dir}")
 
-    model_zip = str(save_path) + ".zip"
+    model_zip = str(save_dir / "model.zip")
     artifact = wandb.Artifact("baseline-final", type="model")
-    artifact.add_file(model_zip)
+    artifact.add_dir(str(save_dir))
     run.log_artifact(artifact)
 
     # Record sample videos

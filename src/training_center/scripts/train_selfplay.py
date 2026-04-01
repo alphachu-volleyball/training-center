@@ -29,6 +29,7 @@ from training_center.env_factory import make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
+from training_center.model_config import ModelConfig, save_model
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
 
 
@@ -41,9 +42,13 @@ def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> N
 
 
 def _log_model_artifact(run: wandb.sdk.wandb_run.Run, name: str, path: str) -> None:
-    """Log a saved model as a wandb artifact."""
+    """Log a saved model directory as a wandb artifact."""
     artifact = wandb.Artifact(name, type="model")
-    artifact.add_file(path + ".zip")
+    p = Path(path)
+    if p.is_dir():
+        artifact.add_dir(str(p))
+    else:
+        artifact.add_file(path + ".zip")
     run.log_artifact(artifact)
 
 
@@ -470,6 +475,10 @@ def main() -> None:
         noise=noise,
     )
 
+    # Model configs
+    p1_cfg = ModelConfig(side="player_1", observation_simplified=args.simplify_observation)
+    p2_cfg = ModelConfig(side="player_2", observation_simplified=args.simplify_observation)
+
     # Initialize models
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)
     if args.p1_init:
@@ -513,15 +522,13 @@ def main() -> None:
 
         # --- Evaluate ---
         if iteration % args.eval_freq == 0:
-            p1_latest = str(save_dir / "p1" / "selfplay_latest")
-            p2_latest = str(save_dir / "p2" / "selfplay_latest")
-            p1_model.save(p1_latest)
-            p2_model.save(p2_latest)
-            _log_model_artifact(run, "p1-latest", p1_latest)
-            _log_model_artifact(run, "p2-latest", p2_latest)
+            p1_latest_dir = save_model(p1_model, save_dir / "p1" / "selfplay_latest", p1_cfg)
+            p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
+            _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
+            _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
             matchups = evaluate_selfplay_detailed(
-                p1_latest + ".zip",
-                p2_latest + ".zip",
+                str(p1_latest_dir),
+                str(p2_latest_dir),
                 games=args.eval_games,
                 winning_score=args.eval_score,
                 simplify_observation=args.simplify_observation,
@@ -574,7 +581,7 @@ def main() -> None:
 
             # PFSP pool stats update
             p1_pfsp = _update_pool_stats(
-                p1_latest + ".zip",
+                str(p1_latest_dir),
                 pool_p2,
                 side="p1",
                 games=args.eval_games,
@@ -584,7 +591,7 @@ def main() -> None:
                 executor=eval_executor,
             )
             p2_pfsp = _update_pool_stats(
-                p2_latest + ".zip",
+                str(p2_latest_dir),
                 pool_p1,
                 side="p2",
                 games=args.eval_games,
@@ -619,15 +626,13 @@ def main() -> None:
             # Save best models
             if p1_wr > best_p1_anchor:
                 best_p1_anchor = p1_wr
-                p1_best = str(save_dir / "p1" / "selfplay_best")
-                p1_model.save(p1_best)
-                _log_model_artifact(run, "p1-best", p1_best)
+                p1_best_dir = save_model(p1_model, save_dir / "p1" / "selfplay_best", p1_cfg)
+                _log_model_artifact(run, "p1-best", str(p1_best_dir))
                 print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
             if p2_wr > best_p2_anchor:
                 best_p2_anchor = p2_wr
-                p2_best = str(save_dir / "p2" / "selfplay_best")
-                p2_model.save(p2_best)
-                _log_model_artifact(run, "p2-best", p2_best)
+                p2_best_dir = save_model(p2_model, save_dir / "p2" / "selfplay_best", p2_cfg)
+                _log_model_artifact(run, "p2-best", str(p2_best_dir))
                 print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
             run.log(log_data, step=step)
@@ -686,26 +691,26 @@ def main() -> None:
         _log_sb3_metrics(run, p2_model, "p2")
 
     # Save final models
-    p1_final = str(save_dir / "p1" / "selfplay_final")
-    p2_final = str(save_dir / "p2" / "selfplay_final")
-    p1_model.save(p1_final)
-    p2_model.save(p2_final)
-    _log_model_artifact(run, "p1-final", p1_final)
-    _log_model_artifact(run, "p2-final", p2_final)
+    p1_final_dir = save_model(p1_model, save_dir / "p1" / "selfplay_final", p1_cfg)
+    p2_final_dir = save_model(p2_model, save_dir / "p2" / "selfplay_final", p2_cfg)
+    _log_model_artifact(run, "p1-final", str(p1_final_dir))
+    _log_model_artifact(run, "p2-final", str(p2_final_dir))
 
     # Record sample videos
     from pika_zoo.scripts.play import play
 
-    for side, model_path in [("player_1", p1_final), ("player_2", p2_final)]:
+    p1_final_zip = str(p1_final_dir / "model.zip")
+    p2_final_zip = str(p2_final_dir / "model.zip")
+    for side, model_zip in [("player_1", p1_final_zip), ("player_2", p2_final_zip)]:
         label = "p1" if side == "player_1" else "p2"
         for opp in [anchor_name, "random"]:
             video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
-            _record_video(model_path + ".zip", side, opp, video_path)
+            _record_video(model_zip, side, opp, video_path)
             run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
     # p1 vs p2
     p1v2_path = str(save_dir / "p1_vs_p2.mp4")
-    play(p1=p1_final + ".zip", p2=p2_final + ".zip", winning_score=5, render=False, record=p1v2_path, seed=0)
+    play(p1=p1_final_zip, p2=p2_final_zip, winning_score=5, render=False, record=p1v2_path, seed=0)
     run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
 
     print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
