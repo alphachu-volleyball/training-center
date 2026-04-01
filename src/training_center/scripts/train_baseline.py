@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -330,7 +331,8 @@ def main() -> None:
         observation_normalized=True,
     )
 
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count()) if c.eval_freq > 0 else None
+    mp_context = multiprocessing.get_context("forkserver")
+    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context) if c.eval_freq > 0 else None
 
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:

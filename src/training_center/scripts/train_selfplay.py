@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
 import random
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -498,7 +499,8 @@ def main() -> None:
     pool_p2 = OpponentPool(str(save_dir / "p2"), "p2", anchor=anchor_policy)
 
     eval_workers = os.cpu_count()
-    eval_executor = ProcessPoolExecutor(max_workers=eval_workers)
+    mp_context = multiprocessing.get_context("forkserver")
+    eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context)
 
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")

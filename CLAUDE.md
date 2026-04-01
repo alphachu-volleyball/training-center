@@ -305,3 +305,6 @@ command:
 - Training may run across multiple machines — `experiments/` is synced via cloud storage
 - Low-dimensional vector obs + MLP policy → CPU (env parallelization) is the bottleneck
 - SB3 `SubprocVecEnv` with 8-16 parallel environments
+
+> [!IMPORTANT]
+> `ProcessPoolExecutor` must use `mp_context=multiprocessing.get_context("forkserver")` on Linux. The default `fork` method copies PyTorch/OpenMP mutex state, causing deadlock. macOS (`spawn` default) is unaffected.
