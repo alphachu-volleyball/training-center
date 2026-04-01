@@ -92,4 +92,15 @@ def compute_eval_metrics(record: GamesRecord, model_side: str) -> dict[str, floa
     else:
         metrics["receive_avg_round_frames"] = 0.0
 
+    # Serve/receive win rates
+    all_rounds = [r for g in record.games for r in g.rounds]
+    model_serve = [r for r in all_rounds if r.server == model_side]
+    opp_serve = [r for r in all_rounds if r.server != model_side]
+    metrics["serve_win_rate"] = (
+        sum(1 for r in model_serve if r.scorer == model_side) / len(model_serve) if model_serve else 0.0
+    )
+    metrics["receive_win_rate"] = (
+        sum(1 for r in opp_serve if r.scorer == model_side) / len(opp_serve) if opp_serve else 0.0
+    )
+
     return metrics
