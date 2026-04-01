@@ -25,7 +25,6 @@ from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
 from training_center.curriculum_pool import CurriculumPool
-from training_center.elo import INITIAL_ELO, update_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -138,15 +137,10 @@ def main() -> None:
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument("--unlock-threshold", type=float, default=0.7, help="Min win rate to unlock next opponent")
-    parser.add_argument("--initial-unlocked", type=int, default=2, help="Number of opponents unlocked at start")
+    parser.add_argument("--initial-unlocked", type=int, default=3, help="Number of opponents unlocked at start")
     parser.add_argument("--eval-freq", type=int, default=5, help="Evaluate every N iterations")
     parser.add_argument("--eval-games", type=int, default=10, help="Games per opponent per evaluation")
     parser.add_argument("--eval-score", type=int, default=5, help="Winning score for eval games")
-    parser.add_argument(
-        "--eval-opponents",
-        default="random,builtin",
-        help="Comma-separated eval opponents for ELO tracking",
-    )
     parser.add_argument("--save-dir", required=True)
     parser.add_argument("--save-interval", type=int, default=10)
     parser.add_argument("--ent-coef", type=float, default=0.01)
@@ -176,8 +170,6 @@ def main() -> None:
     for i in range(min(args.initial_unlocked, len(CURRICULUM_LADDER))):
         pool.force_unlock(i)
 
-    eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
-
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
@@ -193,7 +185,6 @@ def main() -> None:
             "unlock_threshold": args.unlock_threshold,
             "initial_unlocked": args.initial_unlocked,
             "eval_freq": args.eval_freq,
-            "eval_opponents": args.eval_opponents,
             "ent_coef": args.ent_coef,
             "ladder": CURRICULUM_LADDER,
             **meta,
@@ -240,9 +231,9 @@ def main() -> None:
             artifact.add_dir(str(ckpt_dir))
             run.log_artifact(artifact)
 
-            # Evaluate vs all unlocked opponents (for PFSP stats)
+            # Evaluate vs all unlocked opponents (parallel)
             rng = np.random.default_rng()
-            curriculum_futures = {}
+            futures = {}
             for opp in pool.unlocked:
                 seed = int(rng.integers(0, 2**31))
                 f = eval_executor.submit(
@@ -255,52 +246,20 @@ def main() -> None:
                     args.simplify_observation,
                     seed,
                 )
-                curriculum_futures[f] = opp
+                futures[f] = opp
 
-            curriculum_results: dict[str, dict] = {}
-            for f in as_completed(curriculum_futures):
+            results: dict[str, dict] = {}
+            for f in as_completed(futures):
                 opp_name, result = f.result()
-                curriculum_results[opp_name] = result
+                results[opp_name] = result
 
             # Update pool stats
-            for opp_name, r in curriculum_results.items():
+            for opp_name, r in results.items():
                 for winner in r["game_winners"]:
                     pool.update_stats(opp_name, winner == args.side)
 
             # Try unlock
             newly_unlocked = pool.try_unlock()
-
-            # Evaluate vs eval-opponents (for ELO tracking)
-            eval_futures = {}
-            for opp in eval_opps:
-                seed = int(rng.integers(0, 2**31))
-                f = eval_executor.submit(
-                    _eval_matchup_worker,
-                    model_path,
-                    args.side,
-                    opp,
-                    args.eval_games,
-                    args.eval_score,
-                    args.simplify_observation,
-                    seed,
-                )
-                eval_futures[f] = opp
-
-            eval_results: dict[str, dict] = {}
-            for f in as_completed(eval_futures):
-                opp_name, result = f.result()
-                eval_results[opp_name] = result
-
-            # Compute ELO
-            elo = INITIAL_ELO
-            for opp_name in eval_opps:
-                if opp_name not in eval_results:
-                    continue
-                r = eval_results[opp_name]
-                opp_elo = INITIAL_ELO
-                for winner in r["game_winners"]:
-                    game_result = 1 if winner == args.side else 0
-                    elo, opp_elo = update_elo(elo, opp_elo, game_result)
 
             # Log
             log_data: dict = {"iteration": iteration}
@@ -308,12 +267,10 @@ def main() -> None:
             log_data["curriculum/pool_size"] = status["pool_size"]
             log_data["curriculum/min_win_rate"] = status["min_win_rate"]
             log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
-            for opp_name, wr in status["per_opponent"].items():
-                log_data[f"curriculum/vs_{opp_name}/win_rate"] = wr
 
-            for opp_name, r in eval_results.items():
-                log_data[f"eval/vs_{opp_name}/win_rate"] = r["win_rate"]
-                log_data[f"eval/vs_{opp_name}/avg_score"] = r["avg_score"]
+            for opp_name, r in results.items():
+                log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
+                log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
                 for k in [
                     "avg_round_frames",
                     "std_round_frames",
@@ -322,20 +279,18 @@ def main() -> None:
                     "ball_own_side_ratio",
                 ]:
                     if k in r:
-                        log_data[f"eval/vs_{opp_name}/{k}"] = r[k]
-            log_data["eval/elo"] = elo
+                        log_data[f"curriculum/vs_{opp_name}/{k}"] = r[k]
 
             run.log(log_data, step=step)
 
             # Print
             print(f"\n[Iter {iteration}/{args.total_iterations}, step={step}]", flush=True)
             print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
-            for opp_name, r in curriculum_results.items():
+            for opp_name, r in results.items():
                 wr = pool.get_win_rate(opp_name)
                 print(f"    vs {opp_name}: {r['wins']}W {r['losses']}L (pool wr={wr:.2f})", flush=True)
             if newly_unlocked:
                 print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
-            print(f"  ELO: {elo:.0f}", flush=True)
 
         # --- TRAIN ---
         opp_spec = pool.sample_opponent()
@@ -363,8 +318,8 @@ def main() -> None:
     artifact.add_dir(str(final_dir))
     run.log_artifact(artifact)
 
-    # Record sample videos
-    for opp in eval_opps:
+    # Record sample videos vs unlocked opponents
+    for opp in pool.unlocked:
         video_path = str(save_dir / f"vs_{opp}.mp4")
         _record_video(final_zip, args.side, opp, video_path)
         run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
