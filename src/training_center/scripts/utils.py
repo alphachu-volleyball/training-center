@@ -56,7 +56,8 @@ def setup_graceful_shutdown() -> None:
     """Set up signal handlers for graceful shutdown.
 
     SIGTERM → SystemExit (triggers try/finally cleanup).
-    SIGINT → SIGTERM (bypasses SB3 swallowing KeyboardInterrupt).
+    SIGINT → SIGTERM (prevents SIGINT from reaching worker processes via
+    process group broadcast, which corrupts executor internal state).
     """
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
