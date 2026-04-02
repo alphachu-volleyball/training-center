@@ -188,10 +188,10 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 > [!IMPORTANT]
 > All models are evaluated on their **training side**. `SimplifyObservation` mirrors player_2's x-axis so both sides see a left-side perspective, but the underlying physics engine has [intentional left-right asymmetries](https://github.com/alphachu-volleyball/pika-zoo#physics-engine-left-right-asymmetry) that make cross-side transfer imperfect. The evaluate script takes separate `--p1`/`--p2` pools to ensure correct placement.
 
-#### Baseline Evaluation (`eval/vs_{opp}/`)
+#### Evaluation Metrics (`eval/vs_{opp}/`)
 
-Model is always evaluated on its **training side** (`--side`).
-`{opp}`: `random`, `builtin` (or any AI: `stone`, `duckll:N`)
+Shared across all training scripts. Logged every `--eval-freq` steps/iterations.
+`{opp}`: `random`, `builtin`, `stone`, `duckll:N`, `p2`/`p1` (selfplay only)
 
 | Metric | Range | Description |
 |--------|-------|-------------|
@@ -206,31 +206,26 @@ Model is always evaluated on its **training side** (`--side`).
 | `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
 | `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
 | `eval/vs_{opp}/receive_avg_round_frames` | > 0 | Mean round frames when opponent serves |
-| `eval/elo` | ~1000–2000 | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
+| `eval/elo` | varies | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
 
-#### Self-play Evaluation (`{p1,p2}/eval/`)
+Selfplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_rate`).
 
-p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
-`{opp}`: `p2`/`p1`, `random`, `builtin`
+#### Script-specific Metrics
 
-| Metric | Description |
-|--------|-------------|
-| `{p1,p2}/eval/vs_{opp}/win_rate` | Win rate per side per opponent |
-| `{p1,p2}/eval/vs_{opp}/avg_score` | Average score per game |
-| `{p1,p2}/eval/vs_{opp}/serve_win_rate` | Scoring rate when model serves |
-| `{p1,p2}/eval/vs_{opp}/receive_win_rate` | Scoring rate when opponent serves |
-| `{p1,p2}/eval/vs_{opp}/avg_round_frames` | Mean frames per round |
-| `{p1,p2}/eval/vs_{opp}/std_round_frames` | Std of round duration |
-| `{p1,p2}/eval/vs_{opp}/action_entropy` | Shannon entropy of action distribution |
-| `{p1,p2}/eval/vs_{opp}/power_hit_rate` | Power hits / ball touches |
-| `{p1,p2}/eval/vs_{opp}/ball_own_side_ratio` | Fraction of frames ball on model's half |
-| `{p1,p2}/eval/vs_{opp}/serve_avg_round_frames` | Mean round frames when model serves |
-| `{p1,p2}/eval/vs_{opp}/receive_avg_round_frames` | Mean round frames when opponent serves |
-| `{p1,p2}/pfsp/avg_pool_win_rate` | Average win rate against PFSP pool |
-| `{p1,p2}/pfsp/pool_size` | Number of checkpoints in opponent pool |
-| `{p1,p2}/curriculum/anchor_prob` | Current anchor AI sampling probability |
+| Metric | Script | Timing | Description |
+|--------|--------|--------|-------------|
+| `{p1,p2}/pfsp/avg_pool_win_rate` | selfplay | eval_freq | Average win rate against PFSP pool |
+| `{p1,p2}/pfsp/min_win_rate` | selfplay | eval_freq | Lowest win rate in pool |
+| `{p1,p2}/pfsp/pool_size` | selfplay | eval_freq | Number of checkpoints in opponent pool |
+| `{p1,p2}/curriculum/anchor_prob` | selfplay | every iteration | Anchor AI sampling probability |
+| `{p1,p2}/curriculum/pool_prob` | selfplay | every iteration | Pool sampling probability |
+| `curriculum/pool_size` | curriculum | eval_freq | Number of unlocked opponents |
+| `curriculum/min_win_rate` | curriculum | eval_freq | Lowest win rate across unlocked pool |
+| `curriculum/avg_win_rate` | curriculum | eval_freq | Average win rate across unlocked pool |
 
 #### Training Metrics (SB3 PPO)
+
+Logged every iteration (after `model.learn()`). Selfplay prefixes with `p1/` or `p2/`.
 
 | Metric | Description |
 |--------|-------------|
@@ -238,6 +233,15 @@ p1 model is always evaluated as player_1 (left), p2 as player_2 (right).
 | `train/entropy_loss` | Policy entropy (lower = more deterministic) |
 | `train/explained_variance` | Value function accuracy (1.0 = perfect) |
 | `train/approx_kl` | KL divergence between old and new policy |
+
+#### One-time Outputs
+
+| Metric | Script | Description |
+|--------|--------|-------------|
+| `video/vs_{opp}` | all training | Sample game recording at end of training |
+| `matchups` (Table) | evaluate-roundrobin | Per-matchup win rates and stats |
+| `elo_ratings` (Table) | evaluate-roundrobin | Batch Bradley-Terry ELO ratings |
+| `elo/{agent}` (summary) | evaluate-roundrobin | ELO per agent in run summary |
 
 #### Run Config (auto-recorded)
 
