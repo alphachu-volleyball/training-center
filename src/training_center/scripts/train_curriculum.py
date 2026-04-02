@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
+import signal
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -110,6 +112,11 @@ def _eval_matchup_worker(
         "game_winners": [e.winner for e in all_episodes],
         **detail,
     }
+
+
+def _worker_init() -> None:
+    """Ignore SIGINT in worker processes so only the main process handles it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
@@ -217,7 +224,7 @@ def main() -> None:
         model = PPO("MlpPolicy", envs, seed=args.seed, **ppo_kwargs)
 
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context)
+    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv)")
@@ -225,119 +232,123 @@ def main() -> None:
     print(f"Initial pool: {pool.unlocked}")
     print(f"Ladder: {CURRICULUM_LADDER}")
 
-    for iteration in range(args.total_iterations):
-        step = model.num_timesteps
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
-        # --- EVALUATE ---
-        if iteration % args.eval_freq == 0:
-            ckpt_dir = save_model(model, save_dir / f"checkpoint_{iteration:06d}", model_cfg)
-            model_path = str(ckpt_dir / "model.zip")
+    try:
+        for iteration in range(args.total_iterations):
+            step = model.num_timesteps
 
-            artifact = wandb.Artifact(f"curriculum-checkpoint-{iteration:06d}", type="model")
-            artifact.add_dir(str(ckpt_dir))
-            run.log_artifact(artifact)
+            # --- EVALUATE ---
+            if iteration % args.eval_freq == 0:
+                ckpt_dir = save_model(model, save_dir / f"checkpoint_{iteration:06d}", model_cfg)
+                model_path = str(ckpt_dir / "model.zip")
 
-            # Evaluate vs all unlocked opponents (parallel)
-            rng = np.random.default_rng()
-            futures = {}
-            for opp in pool.unlocked:
-                seed = int(rng.integers(0, 2**31))
-                f = eval_executor.submit(
-                    _eval_matchup_worker,
-                    model_path,
-                    args.side,
-                    opp,
-                    args.eval_games,
-                    args.eval_score,
-                    args.simplify_observation,
-                    seed,
-                )
-                futures[f] = opp
+                artifact = wandb.Artifact(f"curriculum-checkpoint-{iteration:06d}", type="model")
+                artifact.add_dir(str(ckpt_dir))
+                run.log_artifact(artifact)
 
-            results: dict[str, dict] = {}
-            for f in as_completed(futures):
-                opp_name, result = f.result()
-                results[opp_name] = result
+                # Evaluate vs all unlocked opponents (parallel)
+                rng = np.random.default_rng()
+                futures = {}
+                for opp in pool.unlocked:
+                    seed = int(rng.integers(0, 2**31))
+                    f = eval_executor.submit(
+                        _eval_matchup_worker,
+                        model_path,
+                        args.side,
+                        opp,
+                        args.eval_games,
+                        args.eval_score,
+                        args.simplify_observation,
+                        seed,
+                    )
+                    futures[f] = opp
 
-            # Update pool stats
-            for opp_name, r in results.items():
-                for winner in r["game_winners"]:
-                    pool.update_stats(opp_name, winner == args.side)
+                results: dict[str, dict] = {}
+                for f in as_completed(futures):
+                    opp_name, result = f.result()
+                    results[opp_name] = result
 
-            # Try unlock
-            newly_unlocked = pool.try_unlock()
+                # Update pool stats
+                for opp_name, r in results.items():
+                    for winner in r["game_winners"]:
+                        pool.update_stats(opp_name, winner == args.side)
 
-            # Log
-            log_data: dict = {"iteration": iteration}
-            status = pool.status()
-            log_data["curriculum/pool_size"] = status["pool_size"]
-            log_data["curriculum/min_win_rate"] = status["min_win_rate"]
-            log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
+                # Try unlock
+                newly_unlocked = pool.try_unlock()
 
-            for opp_name, r in results.items():
-                log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
-                log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
-                for k in [
-                    "serve_win_rate",
-                    "receive_win_rate",
-                    "avg_round_frames",
-                    "std_round_frames",
-                    "action_entropy",
-                    "power_hit_rate",
-                    "ball_own_side_ratio",
-                ]:
-                    if k in r:
-                        log_data[f"curriculum/vs_{opp_name}/{k}"] = r[k]
+                # Log
+                log_data: dict = {"iteration": iteration}
+                status = pool.status()
+                log_data["curriculum/pool_size"] = status["pool_size"]
+                log_data["curriculum/min_win_rate"] = status["min_win_rate"]
+                log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
 
-            run.log(log_data, step=step)
+                for opp_name, r in results.items():
+                    log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
+                    log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
+                    for k in [
+                        "serve_win_rate",
+                        "receive_win_rate",
+                        "avg_round_frames",
+                        "std_round_frames",
+                        "action_entropy",
+                        "power_hit_rate",
+                        "ball_own_side_ratio",
+                    ]:
+                        if k in r:
+                            log_data[f"curriculum/vs_{opp_name}/{k}"] = r[k]
 
-            # Print
-            print(f"\n[Iter {iteration}/{args.total_iterations}, step={step}]", flush=True)
-            print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
-            for opp_name, r in results.items():
-                wr = pool.get_win_rate(opp_name)
-                print(f"    vs {opp_name}: {r['wins']}W {r['losses']}L (pool wr={wr:.2f})", flush=True)
-            if newly_unlocked:
-                print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
+                run.log(log_data, step=step)
 
-        # --- TRAIN ---
-        opp_spec = pool.sample_opponent()
-        opp_policy = _make_opponent(opp_spec)
-        for env in envs.envs:
-            set_opponent_policy(env, opp_policy)
-            env.reset()
+                # Print
+                print(f"\n[Iter {iteration}/{args.total_iterations}, step={step}]", flush=True)
+                print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
+                for opp_name, r in results.items():
+                    wr = pool.get_win_rate(opp_name)
+                    print(f"    vs {opp_name}: {r['wins']}W {r['losses']}L (pool wr={wr:.2f})", flush=True)
+                if newly_unlocked:
+                    print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
 
-        model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            # --- TRAIN ---
+            opp_spec = pool.sample_opponent()
+            opp_policy = _make_opponent(opp_spec)
+            for env in envs.envs:
+                set_opponent_policy(env, opp_policy)
+                env.reset()
 
-        # Log SB3 metrics
-        if model.logger is not None and hasattr(model.logger, "name_to_value"):
-            metrics = {k: v for k, v in model.logger.name_to_value.items()}
-            if metrics:
-                run.log(metrics, step=model.num_timesteps)
+            model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
 
-        # Save periodic checkpoints
-        if iteration % args.save_interval == 0:
-            save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
+            # Log SB3 metrics
+            if model.logger is not None and hasattr(model.logger, "name_to_value"):
+                metrics = {k: v for k, v in model.logger.name_to_value.items()}
+                if metrics:
+                    run.log(metrics, step=model.num_timesteps)
 
-    # Final save
-    final_dir = save_model(model, save_dir / "final", model_cfg)
-    final_zip = str(final_dir / "model.zip")
-    artifact = wandb.Artifact("curriculum-final", type="model")
-    artifact.add_dir(str(final_dir))
-    run.log_artifact(artifact)
+            # Save periodic checkpoints
+            if iteration % args.save_interval == 0:
+                save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
 
-    # Record sample videos vs unlocked opponents
-    for opp in pool.unlocked:
-        video_path = str(save_dir / f"vs_{opp}.mp4")
-        _record_video(final_zip, args.side, opp, video_path)
-        run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+        # Final save
+        final_dir = save_model(model, save_dir / "final", model_cfg)
+        final_zip = str(final_dir / "model.zip")
+        artifact = wandb.Artifact("curriculum-final", type="model")
+        artifact.add_dir(str(final_dir))
+        run.log_artifact(artifact)
 
-    print(f"\nTraining complete. Final pool: {pool.unlocked}")
-    print(f"Model saved to {final_dir}")
+        # Record sample videos vs unlocked opponents
+        for opp in pool.unlocked:
+            video_path = str(save_dir / f"vs_{opp}.mp4")
+            _record_video(final_zip, args.side, opp, video_path)
+            run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
-    eval_executor.shutdown()
-    envs.close()
-    run.finish()
+        print(f"\nTraining complete. Final pool: {pool.unlocked}")
+        print(f"Model saved to {final_dir}")
+    finally:
+        eval_executor.shutdown(wait=False, cancel_futures=True)
+        envs.close()
+        run.finish()
 
 
 if __name__ == "__main__":

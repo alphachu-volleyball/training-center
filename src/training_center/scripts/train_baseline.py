@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
+import signal
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -27,6 +29,11 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
+
+
+def _worker_init() -> None:
+    """Ignore SIGINT in worker processes so only the main process handles it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
@@ -329,7 +336,11 @@ def main() -> None:
     )
 
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context) if c.eval_freq > 0 else None
+    eval_executor = (
+        ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
+        if c.eval_freq > 0
+        else None
+    )
 
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
@@ -344,28 +355,31 @@ def main() -> None:
             )
         )
 
-    model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
-    if eval_executor is not None:
-        eval_executor.shutdown()
+    try:
+        model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
 
-    save_dir = save_model(model, save_path, model_cfg)
-    print(f"\nModel saved to {save_dir}")
+        save_dir = save_model(model, save_path, model_cfg)
+        print(f"\nModel saved to {save_dir}")
 
-    model_zip = str(save_dir / "model.zip")
-    artifact = wandb.Artifact("baseline-final", type="model")
-    artifact.add_dir(str(save_dir))
-    run.log_artifact(artifact)
+        model_zip = str(save_dir / "model.zip")
+        artifact = wandb.Artifact("baseline-final", type="model")
+        artifact.add_dir(str(save_dir))
+        run.log_artifact(artifact)
 
-    # Record sample videos
-    eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
-    for opp in eval_opps:
-        video_path = str(save_path.parent / f"vs_{opp}.mp4")
-        _record_video(model_zip, c.side, opp, video_path)
-        run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
-
-    env.close()
-    run.finish()
+        # Record sample videos
+        eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
+        for opp in eval_opps:
+            video_path = str(save_path.parent / f"vs_{opp}.mp4")
+            _record_video(model_zip, c.side, opp, video_path)
+            run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+    finally:
+        if eval_executor is not None:
+            eval_executor.shutdown(wait=False, cancel_futures=True)
+        env.close()
+        run.finish()
 
 
 if __name__ == "__main__":
