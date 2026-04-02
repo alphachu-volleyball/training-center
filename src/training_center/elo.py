@@ -78,3 +78,75 @@ def compute_elo(
     elos = 400 * np.log10(np.maximum(gamma, 1e-300)) + base_elo
 
     return {p: float(elos[idx[p]]) for p in players}
+
+
+def _load_records(path: str) -> list[dict]:
+    """Load records from CSV or JSON file."""
+    import csv
+    import json
+
+    if path.endswith(".json"):
+        with open(path) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "columns" in data and "data" in data:
+            # W&B table format
+            return [dict(zip(data["columns"], row)) for row in data["data"]]
+        return data
+    else:
+        with open(path) as f:
+            return list(csv.DictReader(f))
+
+
+def main() -> None:
+    import argparse
+    import csv
+    import sys
+
+    parser = argparse.ArgumentParser(description="Compute ELO ratings from pairwise results (CSV/JSON)")
+    parser.add_argument("input", help="Input file (CSV or JSON)")
+    parser.add_argument("--p1", required=True, help="Column name for player 1")
+    parser.add_argument("--p2", required=True, help="Column name for player 2")
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--p1-wins", help="Column name for player 1 win count (requires --p2-wins)")
+    group.add_argument("--win-rate", help="Column name for player 1 win rate (requires --games)")
+
+    parser.add_argument("--p2-wins", help="Column name for player 2 win count")
+    parser.add_argument("--games", type=int, help="Games per pair (used with --win-rate)")
+    parser.add_argument("-o", "--output", help="Output CSV path (default: stdout)")
+    args = parser.parse_args()
+
+    if args.p1_wins and not args.p2_wins:
+        parser.error("--p1-wins requires --p2-wins")
+    if args.win_rate and not args.games:
+        parser.error("--win-rate requires --games")
+
+    records = _load_records(args.input)
+
+    win_counts: dict[tuple[str, str], tuple[int, int]] = {}
+    for row in records:
+        p1, p2 = row[args.p1], row[args.p2]
+        if p1 == p2:
+            continue
+        if args.p1_wins:
+            w1, w2 = int(row[args.p1_wins]), int(row[args.p2_wins])
+        else:
+            rate = float(row[args.win_rate])
+            w1 = round(rate * args.games)
+            w2 = args.games - w1
+        win_counts[(p1, p2)] = (w1, w2)
+
+    elos = compute_elo(win_counts)
+
+    out = open(args.output, "w", newline="") if args.output else sys.stdout
+    writer = csv.writer(out)
+    writer.writerow(["agent", "elo"])
+    for name, elo in sorted(elos.items(), key=lambda x: x[1], reverse=True):
+        writer.writerow([name, f"{elo:.1f}"])
+    if args.output:
+        out.close()
+        print(f"Wrote {len(elos)} ratings to {args.output}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
