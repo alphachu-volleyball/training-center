@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from concurrent.futures import ProcessPoolExecutor
 
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
 
@@ -40,6 +41,15 @@ def parse_noise(
 def worker_init() -> None:
     """Ignore SIGINT in worker processes so only the main process handles it."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def shutdown_executor(executor: ProcessPoolExecutor) -> None:
+    """Shut down executor and terminate all worker processes."""
+    if executor._processes:
+        for proc in executor._processes.values():
+            if proc.is_alive():
+                proc.terminate()
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 def setup_graceful_shutdown() -> None:

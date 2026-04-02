@@ -24,7 +24,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.scripts.utils import setup_graceful_shutdown, worker_init
+from training_center.scripts.utils import setup_graceful_shutdown, shutdown_executor, worker_init
 
 
 def _play_single_game(
@@ -129,7 +129,9 @@ def main() -> None:
     all_results: list[tuple[str, str, dict] | None] = [None] * total
 
     mp_context = multiprocessing.get_context("forkserver")
-    with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_context, initializer=worker_init) as executor:
+    executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_context, initializer=worker_init)
+
+    try:
         future_to_idx = {}
         for i, (p1s, p2s, seed) in enumerate(tasks):
             future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
@@ -143,7 +145,9 @@ def main() -> None:
             if done % 100 == 0 or done == total:
                 print(f"  {done}/{total} games done", flush=True)
 
-    print("All games complete.", flush=True)
+        print("All games complete.", flush=True)
+    finally:
+        shutdown_executor(executor)
 
     # Process results per matchup
     win_counts: dict[tuple[str, str], tuple[int, int]] = {}

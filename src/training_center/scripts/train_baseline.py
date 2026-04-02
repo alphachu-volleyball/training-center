@@ -26,7 +26,13 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
-from training_center.scripts.utils import parse_noise, record_video, setup_graceful_shutdown, worker_init
+from training_center.scripts.utils import (
+    parse_noise,
+    record_video,
+    setup_graceful_shutdown,
+    shutdown_executor,
+    worker_init,
+)
 
 
 def _eval_matchup_worker(
@@ -342,7 +348,7 @@ def main() -> None:
             run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
     finally:
         if eval_executor is not None:
-            eval_executor.shutdown(wait=False, cancel_futures=True)
+            shutdown_executor(eval_executor)
         env.close()
         run.finish()
 

@@ -32,7 +32,13 @@ from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
-from training_center.scripts.utils import parse_noise, record_video, setup_graceful_shutdown, worker_init
+from training_center.scripts.utils import (
+    parse_noise,
+    record_video,
+    setup_graceful_shutdown,
+    shutdown_executor,
+    worker_init,
+)
 
 
 def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:
@@ -683,7 +689,7 @@ def main() -> None:
 
         print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
     finally:
-        eval_executor.shutdown(wait=False, cancel_futures=True)
+        shutdown_executor(eval_executor)
         p1_envs.close()
         p2_envs.close()
         run.finish()
