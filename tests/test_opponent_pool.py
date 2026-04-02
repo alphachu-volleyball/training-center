@@ -1,6 +1,7 @@
 """Tests for PFSP opponent pool."""
 
-from training_center.opponent_pool import OpponentPool
+from training_center.pool import OpponentPool
+from training_center.pool.common import PFSPMixin
 
 
 def test_empty_pool_win_rate():
@@ -31,6 +32,7 @@ def test_pfsp_weights_favor_low_winrate():
     for _ in range(8):
         pool.update_stats("b", False)
 
-    weights = pool._pfsp_weights()
     # b should have higher weight (lower win rate -> more practice needed)
-    assert weights[1] > weights[0]
+    weight_a = PFSPMixin.pfsp_weight(pool.get_win_rate("a"))
+    weight_b = PFSPMixin.pfsp_weight(pool.get_win_rate("b"))
+    assert weight_b > weight_a

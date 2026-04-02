@@ -23,12 +23,12 @@ from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
-from training_center.curriculum_pool import CurriculumPool
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
+from training_center.pool import CurriculumPool
 from training_center.scripts.utils import (
     build_eval_log_data,
     parse_noise,

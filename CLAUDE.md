@@ -35,8 +35,10 @@ src/training_center/
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
 ├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
-├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
-├── curriculum_pool.py          # Curriculum pool with unlock-gated difficulty ladder
+├── pool/
+│   ├── common.py               # PFSPMixin: shared win-rate tracking + PFSP sampling
+│   ├── opponent.py             # OpponentPool: model checkpoint pool for self-play
+│   └── curriculum.py           # CurriculumPool: unlock-gated AI ladder
 └── scripts/
     ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
