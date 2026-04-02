@@ -40,8 +40,6 @@ from training_center.scripts.utils import (
 
 # ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty)
 CURRICULUM_LADDER = [
-    "random",
-    "stone",
     "builtin",
     "duckll:0",
     "duckll:1",
