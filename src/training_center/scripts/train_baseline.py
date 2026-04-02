@@ -31,6 +31,11 @@ from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 
 
+def _worker_init() -> None:
+    """Ignore SIGINT in worker processes so only the main process handles it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
     """Record a sample game video using pika-zoo's play script."""
     from pika_zoo.scripts.play import play
@@ -331,7 +336,11 @@ def main() -> None:
     )
 
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context) if c.eval_freq > 0 else None
+    eval_executor = (
+        ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
+        if c.eval_freq > 0
+        else None
+    )
 
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
@@ -347,6 +356,7 @@ def main() -> None:
         )
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
     try:
         model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)

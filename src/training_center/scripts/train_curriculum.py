@@ -114,6 +114,11 @@ def _eval_matchup_worker(
     }
 
 
+def _worker_init() -> None:
+    """Ignore SIGINT in worker processes so only the main process handles it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
     """Record a sample game video."""
     from pika_zoo.scripts.play import play
@@ -219,7 +224,7 @@ def main() -> None:
         model = PPO("MlpPolicy", envs, seed=args.seed, **ppo_kwargs)
 
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context)
+    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv)")
@@ -228,6 +233,7 @@ def main() -> None:
     print(f"Ladder: {CURRICULUM_LADDER}")
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
     try:
         for iteration in range(args.total_iterations):

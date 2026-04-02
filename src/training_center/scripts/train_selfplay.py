@@ -37,6 +37,11 @@ from training_center.model_config import ModelConfig, save_model
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
 
 
+def _worker_init() -> None:
+    """Ignore SIGINT in worker processes so only the main process handles it."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:
     """Read SB3 logger metrics and log to wandb with a prefix."""
     if model.logger is not None and hasattr(model.logger, "name_to_value"):
@@ -481,7 +486,7 @@ def main() -> None:
 
     eval_workers = os.cpu_count()
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context)
+    eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context, initializer=_worker_init)
 
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
@@ -501,6 +506,7 @@ def main() -> None:
     best_p2_anchor = -1.0
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
     try:
         for iteration in range(args.total_iterations):
