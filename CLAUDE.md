@@ -38,7 +38,7 @@ src/training_center/
 ├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
 ├── curriculum_pool.py          # Curriculum pool with unlock-gated difficulty ladder
 └── scripts/
-    ├── utils.py                # Shared utilities (noise, signals, video recording)
+    ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
     ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
