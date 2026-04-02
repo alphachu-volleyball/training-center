@@ -258,7 +258,7 @@ def main() -> None:
                 log_data["curriculum/min_win_rate"] = status["min_win_rate"]
                 log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
 
-                log_data.update(build_eval_log_data(results, "curriculum"))
+                log_data.update(build_eval_log_data(results, "eval"))
 
                 run.log(log_data, step=step)
 
