@@ -10,15 +10,12 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
-import signal
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
-from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
@@ -29,20 +26,7 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
-
-
-def _worker_init() -> None:
-    """Ignore SIGINT in worker processes so only the main process handles it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
-def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
-    """Record a sample game video using pika-zoo's play script."""
-    from pika_zoo.scripts.play import play
-
-    p1 = model_path if side == "player_1" else opponent
-    p2 = opponent if side == "player_1" else model_path
-    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
+from training_center.scripts.utils import parse_noise, record_video, setup_graceful_shutdown, worker_init
 
 
 def _eval_matchup_worker(
@@ -280,25 +264,7 @@ def main() -> None:
     # Read from wandb.config so sweep overrides take effect
     c = wandb.config
 
-    NOISE_LEVELS = {
-        0: (0, 0, 0),
-        1: (5, 3, 1),
-        2: (10, 5, 2),
-        3: (20, 10, 3),
-        4: (35, 15, 4),
-        5: (50, 20, 5),
-    }
-
-    noise = None
-    if c.noise_level is not None and c.noise_level > 0:
-        x, xv, yv = NOISE_LEVELS[c.noise_level]
-        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
-    elif c.noise_x is not None or c.noise_x_vel is not None or c.noise_y_vel is not None:
-        noise = NoiseConfig(
-            x_range=c.noise_x or 0,
-            x_velocity_range=c.noise_x_vel or 0,
-            y_velocity_range=c.noise_y_vel or 0,
-        )
+    noise = parse_noise(c.noise_level, c.noise_x, c.noise_x_vel, c.noise_y_vel)
 
     def _make_opponent(spec: str) -> BuiltinAI | RandomAI | StoneAI | DuckllAI:
         if spec == "builtin":
@@ -337,7 +303,7 @@ def main() -> None:
 
     mp_context = multiprocessing.get_context("forkserver")
     eval_executor = (
-        ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
+        ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=worker_init)
         if c.eval_freq > 0
         else None
     )
@@ -355,8 +321,7 @@ def main() -> None:
             )
         )
 
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
-    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
+    setup_graceful_shutdown()
 
     try:
         model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
@@ -373,7 +338,7 @@ def main() -> None:
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
         for opp in eval_opps:
             video_path = str(save_path.parent / f"vs_{opp}.mp4")
-            _record_video(model_zip, c.side, opp, video_path)
+            record_video(model_zip, c.side, opp, video_path)
             run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
     finally:
         if eval_executor is not None:

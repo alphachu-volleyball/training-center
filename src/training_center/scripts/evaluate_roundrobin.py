@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
-import signal
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 
@@ -25,11 +24,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-
-
-def _worker_init() -> None:
-    """Ignore SIGINT in worker processes so only the main process handles it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+from training_center.scripts.utils import worker_init
 
 
 def _play_single_game(
@@ -133,7 +128,7 @@ def main() -> None:
     all_results: list[tuple[str, str, dict] | None] = [None] * total
 
     mp_context = multiprocessing.get_context("forkserver")
-    with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_context, initializer=_worker_init) as executor:
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_context, initializer=worker_init) as executor:
         future_to_idx = {}
         for i, (p1s, p2s, seed) in enumerate(tasks):
             future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
