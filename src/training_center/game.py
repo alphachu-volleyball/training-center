@@ -145,5 +145,3 @@ def play_game(
 
     env.close()
     return game
-
-
