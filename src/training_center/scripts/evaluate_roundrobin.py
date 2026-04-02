@@ -20,7 +20,7 @@ from itertools import product
 import numpy as np
 import wandb
 
-from training_center.elo import INITIAL_ELO, update_elo
+from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -144,13 +144,7 @@ def main() -> None:
     print("All games complete.", flush=True)
 
     # Process results per matchup
-    elos: dict[str, float] = {}
-    for _, _, p1_name, p2_name, _ in matchups:
-        if p1_name not in elos:
-            elos[p1_name] = INITIAL_ELO
-        if p2_name not in elos:
-            elos[p2_name] = INITIAL_ELO
-
+    win_counts: dict[tuple[str, str], tuple[int, int]] = {}
     table_rows: list[list] = []
 
     idx = 0
@@ -165,11 +159,11 @@ def main() -> None:
         for _, _, data in matchup_results:
             result = 1 if data["winner"] == "player_1" else 0
             p1_wins += result
-            # Skip ELO update for self-matchups (would only add noise)
-            if not is_self:
-                elos[p1_name], elos[p2_name] = update_elo(elos[p1_name], elos[p2_name], result)
             all_rounds_data.extend(data["rounds"])
             all_scores.append(tuple(data["scores"]))
+
+        if not is_self:
+            win_counts[(p1_name, p2_name)] = (p1_wins, args.games - p1_wins)
 
         p2_wins = args.games - p1_wins
         avg_p1_score = float(np.mean([s[0] for s in all_scores]))
@@ -230,7 +224,9 @@ def main() -> None:
     )
     run.log({"matchups": matchup_table})
 
-    # Log ELO ratings as wandb.Table and run.summary
+    # Compute ELO ratings (batch Bradley-Terry)
+    elos = compute_elo(win_counts)
+
     elo_table = wandb.Table(
         columns=["agent", "elo"],
         data=[[name, elo] for name, elo in sorted(elos.items(), key=lambda x: x[1], reverse=True)],

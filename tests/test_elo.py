@@ -1,31 +1,45 @@
-"""Tests for ELO rating calculation."""
+"""Tests for ELO rating calculation (batch Bradley-Terry)."""
 
-from training_center.elo import INITIAL_ELO, update_elo
-
-
-def test_update_elo_a_wins():
-    ra, rb = update_elo(INITIAL_ELO, INITIAL_ELO, 1.0)
-    assert ra > INITIAL_ELO
-    assert rb < INITIAL_ELO
-    assert abs((ra - INITIAL_ELO) + (rb - INITIAL_ELO)) < 1e-9  # zero-sum
+from training_center.elo import INITIAL_ELO, compute_elo
 
 
-def test_update_elo_b_wins():
-    ra, rb = update_elo(INITIAL_ELO, INITIAL_ELO, 0.0)
-    assert ra < INITIAL_ELO
-    assert rb > INITIAL_ELO
+def test_equal_players_get_equal_elo():
+    results = {("A", "B"): (50, 50)}
+    elos = compute_elo(results)
+    assert abs(elos["A"] - elos["B"]) < 1e-3
 
 
-def test_update_elo_draw():
-    ra, rb = update_elo(INITIAL_ELO, INITIAL_ELO, 0.5)
-    assert abs(ra - INITIAL_ELO) < 1e-9
-    assert abs(rb - INITIAL_ELO) < 1e-9
+def test_winner_gets_higher_elo():
+    results = {("A", "B"): (80, 20)}
+    elos = compute_elo(results)
+    assert elos["A"] > elos["B"]
 
 
-def test_update_elo_stronger_wins_less():
-    # When a stronger player (higher ELO) wins, they gain fewer points
-    ra_strong, rb_weak = update_elo(1700, 1300, 1.0)
-    ra_equal, rb_equal = update_elo(1500, 1500, 1.0)
-    gain_strong = ra_strong - 1700
-    gain_equal = ra_equal - 1500
-    assert gain_strong < gain_equal
+def test_order_independent():
+    """Swapping input order must not change ratings."""
+    r1 = {("A", "B"): (70, 30), ("A", "C"): (60, 40), ("B", "C"): (55, 45)}
+    r2 = {("B", "C"): (55, 45), ("A", "C"): (60, 40), ("A", "B"): (70, 30)}
+    elos1 = compute_elo(r1)
+    elos2 = compute_elo(r2)
+    for p in ("A", "B", "C"):
+        assert abs(elos1[p] - elos2[p]) < 1e-3
+
+
+def test_three_players_ranking():
+    results = {("A", "B"): (90, 10), ("B", "C"): (80, 20), ("A", "C"): (95, 5)}
+    elos = compute_elo(results)
+    assert elos["A"] > elos["B"] > elos["C"]
+
+
+def test_mean_elo_is_initial():
+    """Geometric mean of strengths maps to INITIAL_ELO."""
+    results = {("A", "B"): (70, 30), ("A", "C"): (60, 40), ("B", "C"): (55, 45)}
+    elos = compute_elo(results)
+    mean_elo = sum(elos.values()) / len(elos)
+    assert abs(mean_elo - INITIAL_ELO) < 5  # approximately centered
+
+
+def test_no_games_played():
+    elos = compute_elo({("A", "B"): (0, 0)})
+    # No games played, should still return ratings
+    assert "A" in elos and "B" in elos

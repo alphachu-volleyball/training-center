@@ -21,7 +21,7 @@ from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
-from training_center.elo import INITIAL_ELO, update_elo
+from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -172,16 +172,15 @@ class EvalCallback(BaseCallback):
                     results[opp_name] = result
 
             # Compute ELO and log
-            elo = INITIAL_ELO
+            model_name = "__model__"
+            win_counts: dict[tuple[str, str], tuple[int, int]] = {}
             log_data: dict = {}
 
             for opp_name in self.eval_opponents:
                 r = results[opp_name]
-                # Update ELO from per-game winners
-                opp_elo = INITIAL_ELO
-                for winner in r["game_winners"]:
-                    game_result = 1 if winner == model_side else 0
-                    elo, opp_elo = update_elo(elo, opp_elo, game_result)
+                wins = sum(1 for w in r["game_winners"] if w == model_side)
+                losses = len(r["game_winners"]) - wins
+                win_counts[(model_name, opp_name)] = (wins, losses)
 
                 log_data[f"eval/vs_{opp_name}/win_rate"] = r["win_rate"]
                 log_data[f"eval/vs_{opp_name}/avg_score"] = r["avg_score"]
@@ -204,6 +203,8 @@ class EvalCallback(BaseCallback):
                 if self.verbose:
                     print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
 
+            elos = compute_elo(win_counts)
+            elo = elos.get(model_name, 1500.0)
             log_data["eval/elo"] = elo
             wandb.run.log(log_data, step=self.num_timesteps)
 
