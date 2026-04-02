@@ -24,9 +24,10 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import build_eval_log_data, compute_eval_metrics
+from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
+    build_eval_log_data,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
