@@ -89,9 +89,13 @@ def _eval_matchup_worker(
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
         if model_side == "player_1":
-            episode = play_game(model_player, opp_player, winning_score=winning_score, seed=game_seed)
+            episode = play_game(
+                model_player, opp_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         else:
-            episode = play_game(opp_player, model_player, winning_score=winning_score, seed=game_seed)
+            episode = play_game(
+                opp_player, model_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         all_episodes.append(episode)
 
     model_idx = 0 if model_side == "player_1" else 1
