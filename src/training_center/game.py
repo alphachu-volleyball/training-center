@@ -9,7 +9,7 @@ from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.ai.sb3_adapter import SB3ModelPolicy
 from pika_zoo.env.pikachu_volleyball import PikachuVolleyballEnv
-from pika_zoo.records.types import GameRecord, GamesRecord
+from pika_zoo.records.types import GameRecord
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
 from pika_zoo.wrappers.record_game import RecordGame
 from pika_zoo.wrappers.simplify_action import SimplifyAction
@@ -145,51 +145,3 @@ def play_game(
 
     env.close()
     return game
-
-
-def analyze_games(
-    p1_spec: str,
-    p2_spec: str,
-    games: int = 100,
-    winning_score: int = 15,
-    seed: int = 42,
-) -> GamesRecord:
-    """Run multiple games and print aggregate statistics."""
-    p1 = make_player(p1_spec, agent="player_1")
-    p2 = make_player(p2_spec, agent="player_2")
-    rng = np.random.default_rng(seed)
-
-    all_games: list[GameRecord] = []
-    for _ in range(games):
-        game_seed = int(rng.integers(0, 2**31))
-        game = play_game(p1, p2, winning_score=winning_score, seed=game_seed)
-        all_games.append(game)
-
-    record = GamesRecord(games=all_games)
-
-    p1_wins = record.win_counts.get("player_1", 0)
-    all_rounds = [r for g in all_games for r in g.rounds]
-    p1_serve_rounds = [r for r in all_rounds if r.server == "player_1"]
-    p2_serve_rounds = [r for r in all_rounds if r.server == "player_2"]
-    durations = [r.duration for r in all_rounds]
-
-    print(f"=== {p1.name} (p1) vs {p2.name} (p2) — {games} games, {winning_score} pts ===\n")
-    print(f"Record: p1 {p1_wins}W {games - p1_wins}L ({p1_wins / games * 100:.0f}%)\n")
-
-    if p1_serve_rounds:
-        p1s_p1w = sum(1 for r in p1_serve_rounds if r.scorer == "player_1")
-        pct = p1s_p1w / len(p1_serve_rounds) * 100
-        print(f"p1 serve → p1 wins: {p1s_p1w}/{len(p1_serve_rounds)} ({pct:.1f}%)")
-    if p2_serve_rounds:
-        p2s_p2w = sum(1 for r in p2_serve_rounds if r.scorer == "player_2")
-        pct = p2s_p2w / len(p2_serve_rounds) * 100
-        print(f"p2 serve → p2 wins: {p2s_p2w}/{len(p2_serve_rounds)} ({pct:.1f}%)")
-
-    if durations:
-        print(
-            f"\nRound frames: mean {np.mean(durations):.1f}, "
-            f"median {np.median(durations):.1f}, "
-            f"range {np.min(durations)}-{np.max(durations)}"
-        )
-
-    return record

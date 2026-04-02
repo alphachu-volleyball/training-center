@@ -15,8 +15,6 @@ import json
 import multiprocessing
 import os
 import random
-import signal
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -24,7 +22,6 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
-from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
@@ -34,12 +31,15 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
-from training_center.opponent_pool import OpponentPool, make_opponent_policy
-
-
-def _worker_init() -> None:
-    """Ignore SIGINT in worker processes so only the main process handles it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+from training_center.pool import OpponentPool, make_opponent_policy
+from training_center.scripts.utils import (
+    build_eval_log_data,
+    parse_noise,
+    record_video,
+    setup_graceful_shutdown,
+    shutdown_executor,
+    worker_init,
+)
 
 
 def _log_sb3_metrics(run: wandb.sdk.wandb_run.Run, model: PPO, prefix: str) -> None:
@@ -59,15 +59,6 @@ def _log_model_artifact(run: wandb.sdk.wandb_run.Run, name: str, path: str) -> N
     else:
         artifact.add_file(path + ".zip")
     run.log_artifact(artifact)
-
-
-def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
-    """Record a sample game video using pika-zoo's play script."""
-    from pika_zoo.scripts.play import play
-
-    p1 = model_path if side == "player_1" else opponent
-    p2 = opponent if side == "player_1" else model_path
-    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
 
 
 def _run_matchup_worker(
@@ -327,25 +318,7 @@ def main() -> None:
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
-    NOISE_LEVELS = {
-        0: (0, 0, 0),
-        1: (5, 3, 1),
-        2: (10, 5, 2),
-        3: (20, 10, 3),
-        4: (35, 15, 4),
-        5: (50, 20, 5),
-    }
-
-    noise = None
-    if args.noise_level is not None and args.noise_level > 0:
-        x, xv, yv = NOISE_LEVELS[args.noise_level]
-        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
-    elif args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
-        noise = NoiseConfig(
-            x_range=args.noise_x or 0,
-            x_velocity_range=args.noise_x_vel or 0,
-            y_velocity_range=args.noise_y_vel or 0,
-        )
+    noise = parse_noise(args.noise_level, args.noise_x, args.noise_x_vel, args.noise_y_vel)
 
     def _make_anchor(spec: str) -> AIPolicy:
         if spec == "builtin":
@@ -486,7 +459,7 @@ def main() -> None:
 
     eval_workers = os.cpu_count()
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context, initializer=_worker_init)
+    eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context, initializer=worker_init)
 
     print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
@@ -505,8 +478,7 @@ def main() -> None:
     best_p1_anchor = -1.0
     best_p2_anchor = -1.0
 
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
-    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
+    setup_graceful_shutdown()
 
     try:
         for iteration in range(args.total_iterations):
@@ -540,36 +512,20 @@ def main() -> None:
                         flush=True,
                     )
 
-                    metric_keys = [
-                        "win_rate",
-                        "avg_score",
-                        "serve_win_rate",
-                        "receive_win_rate",
-                        "avg_round_frames",
-                        "std_round_frames",
-                        "action_entropy",
-                        "power_hit_rate",
-                        "ball_own_side_ratio",
-                        "serve_avg_round_frames",
-                        "receive_avg_round_frames",
-                    ]
-
+                # Build per-side eval results for log_data
+                p1_results = {}
+                p2_results = {}
+                for match, s in matchups.items():
                     if match.startswith("p1_vs_"):
-                        opponent = match[len("p1_vs_") :]
-                        for k in metric_keys:
-                            if k in s:
-                                log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
-
+                        p1_results[match[len("p1_vs_") :]] = s
                     if match.startswith("p2_vs_"):
-                        opponent = match[len("p2_vs_") :]
-                        for k in metric_keys:
-                            if k in s:
-                                log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
-
+                        p2_results[match[len("p2_vs_") :]] = s
                     if match == "p1_vs_p2":
                         log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
                         log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
                         log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
+                log_data.update(build_eval_log_data(p1_results, "p1/eval"))
+                log_data.update(build_eval_log_data(p2_results, "p2/eval"))
 
                 # Compute ELO for p1 and p2
                 for side_label in ["p1", "p2"]:
@@ -708,7 +664,7 @@ def main() -> None:
             label = "p1" if side == "player_1" else "p2"
             for opp in eval_opps:
                 video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
-                _record_video(model_zip, side, opp, video_path)
+                record_video(model_zip, side, opp, video_path)
                 run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
         # p1 vs p2
@@ -718,7 +674,7 @@ def main() -> None:
 
         print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
     finally:
-        eval_executor.shutdown(wait=False, cancel_futures=True)
+        shutdown_executor(eval_executor)
         p1_envs.close()
         p2_envs.close()
         run.finish()

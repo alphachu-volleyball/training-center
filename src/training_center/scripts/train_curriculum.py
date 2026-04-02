@@ -5,7 +5,7 @@ Uses PFSP sampling within the unlocked pool.
 
 Usage:
   uv run train-curriculum --save-dir experiments/010 --total-iterations 200
-  uv run train-curriculum --save-dir experiments/010 --unlock-threshold 0.8 --initial-unlocked 3
+  uv run train-curriculum --save-dir experiments/010 --unlock-threshold 0.8
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
-import signal
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -22,25 +20,30 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
-from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
-from training_center.curriculum_pool import CurriculumPool
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
+from training_center.pool import CurriculumPool
+from training_center.scripts.utils import (
+    build_eval_log_data,
+    parse_noise,
+    record_video,
+    setup_graceful_shutdown,
+    shutdown_executor,
+    worker_init,
+)
 
-# ELO ladder from experiment 009 (ascending difficulty)
+# ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty)
 CURRICULUM_LADDER = [
-    "stone",
-    "random",
-    "duckll:1",
     "builtin",
-    "duckll:2",
     "duckll:0",
+    "duckll:1",
+    "duckll:2",
     "duckll:3",
     "duckll:7",
     "duckll:5",
@@ -50,15 +53,6 @@ CURRICULUM_LADDER = [
     "duckll:9",
     "duckll:10",
 ]
-
-NOISE_LEVELS = {
-    0: (0, 0, 0),
-    1: (5, 3, 1),
-    2: (10, 5, 2),
-    3: (20, 10, 3),
-    4: (35, 15, 4),
-    5: (50, 20, 5),
-}
 
 
 def _make_opponent(spec: str) -> AIPolicy:
@@ -95,9 +89,13 @@ def _eval_matchup_worker(
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
         if model_side == "player_1":
-            episode = play_game(model_player, opp_player, winning_score=winning_score, seed=game_seed)
+            episode = play_game(
+                model_player, opp_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         else:
-            episode = play_game(opp_player, model_player, winning_score=winning_score, seed=game_seed)
+            episode = play_game(
+                opp_player, model_player, winning_score=winning_score, seed=game_seed, record_frames=True
+            )
         all_episodes.append(episode)
 
     model_idx = 0 if model_side == "player_1" else 1
@@ -112,20 +110,6 @@ def _eval_matchup_worker(
         "game_winners": [e.winner for e in all_episodes],
         **detail,
     }
-
-
-def _worker_init() -> None:
-    """Ignore SIGINT in worker processes so only the main process handles it."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
-def _record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
-    """Record a sample game video."""
-    from pika_zoo.scripts.play import play
-
-    p1 = model_path if side == "player_1" else opponent
-    p2 = opponent if side == "player_1" else model_path
-    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
 
 
 def main() -> None:
@@ -150,7 +134,7 @@ def main() -> None:
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument("--unlock-threshold", type=float, default=0.75, help="Min win rate to unlock next opponent")
-    parser.add_argument("--initial-unlocked", type=int, default=3, help="Number of opponents unlocked at start")
+    parser.add_argument("--initial-unlocked", type=int, default=1, help="Number of opponents unlocked at start")
     parser.add_argument("--eval-freq", type=int, default=5, help="Evaluate every N iterations")
     parser.add_argument("--eval-games", type=int, default=10, help="Games per opponent per evaluation")
     parser.add_argument("--eval-score", type=int, default=5, help="Winning score for eval games")
@@ -166,17 +150,7 @@ def main() -> None:
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
-    # Noise config
-    noise = None
-    if args.noise_level is not None and args.noise_level > 0:
-        x, xv, yv = NOISE_LEVELS[args.noise_level]
-        noise = NoiseConfig(x_range=x, x_velocity_range=xv, y_velocity_range=yv)
-    elif args.noise_x is not None or args.noise_x_vel is not None or args.noise_y_vel is not None:
-        noise = NoiseConfig(
-            x_range=args.noise_x or 0,
-            x_velocity_range=args.noise_x_vel or 0,
-            y_velocity_range=args.noise_y_vel or 0,
-        )
+    noise = parse_noise(args.noise_level, args.noise_x, args.noise_x_vel, args.noise_y_vel)
 
     # Curriculum pool
     pool = CurriculumPool(CURRICULUM_LADDER, unlock_threshold=args.unlock_threshold)
@@ -224,7 +198,7 @@ def main() -> None:
         model = PPO("MlpPolicy", envs, seed=args.seed, **ppo_kwargs)
 
     mp_context = multiprocessing.get_context("forkserver")
-    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=_worker_init)
+    eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=worker_init)
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv)")
@@ -232,8 +206,7 @@ def main() -> None:
     print(f"Initial pool: {pool.unlocked}")
     print(f"Ladder: {CURRICULUM_LADDER}")
 
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
-    signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
+    setup_graceful_shutdown()
 
     try:
         for iteration in range(args.total_iterations):
@@ -285,20 +258,7 @@ def main() -> None:
                 log_data["curriculum/min_win_rate"] = status["min_win_rate"]
                 log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
 
-                for opp_name, r in results.items():
-                    log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
-                    log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
-                    for k in [
-                        "serve_win_rate",
-                        "receive_win_rate",
-                        "avg_round_frames",
-                        "std_round_frames",
-                        "action_entropy",
-                        "power_hit_rate",
-                        "ball_own_side_ratio",
-                    ]:
-                        if k in r:
-                            log_data[f"curriculum/vs_{opp_name}/{k}"] = r[k]
+                log_data.update(build_eval_log_data(results, "eval"))
 
                 run.log(log_data, step=step)
 
@@ -340,13 +300,13 @@ def main() -> None:
         # Record sample videos vs unlocked opponents
         for opp in pool.unlocked:
             video_path = str(save_dir / f"vs_{opp}.mp4")
-            _record_video(final_zip, args.side, opp, video_path)
+            record_video(final_zip, args.side, opp, video_path)
             run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
         print(f"\nTraining complete. Final pool: {pool.unlocked}")
         print(f"Model saved to {final_dir}")
     finally:
-        eval_executor.shutdown(wait=False, cancel_futures=True)
+        shutdown_executor(eval_executor)
         envs.close()
         run.finish()
 

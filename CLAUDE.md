@@ -35,9 +35,12 @@ src/training_center/
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
 ├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
-├── opponent_pool.py            # PFSP opponent pool with sliding-window win-rate
-├── curriculum_pool.py          # Curriculum pool with unlock-gated difficulty ladder
+├── pool/
+│   ├── common.py               # PFSPMixin: shared win-rate tracking + PFSP sampling
+│   ├── opponent.py             # OpponentPool: model checkpoint pool for self-play
+│   └── curriculum.py           # CurriculumPool: unlock-gated AI ladder
 └── scripts/
+    ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
     ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
     ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
@@ -52,6 +55,7 @@ uv run train-selfplay         # Self-play training (PFSP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 uv run compute-elo            # Compute ELO from CSV/JSON matchup files
+uv run play                   # Play/record games (from pika-zoo)
 ```
 
 ### Wrapper Chain

@@ -11,7 +11,7 @@ import numpy as np
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 
-PFSP_WINDOW = 30
+from training_center.pool.common import PFSP_WINDOW, PFSPMixin
 
 
 def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
@@ -24,7 +24,7 @@ def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
     return policy
 
 
-class OpponentPool:
+class OpponentPool(PFSPMixin):
     """PFSP opponent pool with sliding-window win-rate tracking.
 
     Opponent selection:
@@ -63,28 +63,9 @@ class OpponentPool:
         if not self.checkpoints:
             return latest_model, "latest", False
 
-        weights = self._pfsp_weights()
-        idx = random.choices(range(len(self.checkpoints)), weights=weights, k=1)[0]
+        names = [os.path.basename(p) for p in self.checkpoints]
+        sampled = self._pfsp_sample(names)
+        idx = names.index(sampled)
         path = self.checkpoints[idx]
-        name = os.path.basename(path)
         model = PPO.load(path, device="cpu")
-        return model, name, False
-
-    def update_stats(self, opponent_name: str, won: bool) -> None:
-        if opponent_name not in self.win_stats:
-            self.win_stats[opponent_name] = deque(maxlen=PFSP_WINDOW)
-        self.win_stats[opponent_name].append(bool(won))
-
-    def get_win_rate(self, opponent_name: str) -> float:
-        history = self.win_stats.get(opponent_name)
-        if not history:
-            return 0.5
-        return sum(history) / len(history)
-
-    def _pfsp_weights(self) -> list[float]:
-        weights = []
-        for path in self.checkpoints:
-            name = os.path.basename(path)
-            win_rate = self.get_win_rate(name)
-            weights.append(1.0 - win_rate + 0.1)
-        return weights
+        return model, sampled, False

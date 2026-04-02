@@ -7,13 +7,12 @@ progressively unlocked as the learner improves.
 
 from __future__ import annotations
 
-import random
 from collections import deque
 
-PFSP_WINDOW = 30
+from training_center.pool.common import PFSP_WINDOW, PFSPMixin
 
 
-class CurriculumPool:
+class CurriculumPool(PFSPMixin):
     """PFSP opponent pool with unlock-gated difficulty ladder.
 
     Opponents are unlocked in order when the minimum win rate across
@@ -56,26 +55,7 @@ class CurriculumPool:
         """PFSP-weighted sampling from unlocked pool."""
         if not self.unlocked:
             return self.ladder[0]
-
-        weights = []
-        for name in self.unlocked:
-            wr = self.get_win_rate(name)
-            weights.append(1.0 - wr + 0.1)
-
-        return random.choices(self.unlocked, weights=weights, k=1)[0]
-
-    def update_stats(self, opponent_name: str, won: bool) -> None:
-        """Record a win/loss result."""
-        if opponent_name not in self.win_stats:
-            self.win_stats[opponent_name] = deque(maxlen=PFSP_WINDOW)
-        self.win_stats[opponent_name].append(bool(won))
-
-    def get_win_rate(self, opponent_name: str) -> float:
-        """Return sliding-window win rate for an opponent."""
-        history = self.win_stats.get(opponent_name)
-        if not history:
-            return 0.5
-        return sum(history) / len(history)
+        return self._pfsp_sample(self.unlocked)
 
     def status(self) -> dict:
         """Return pool status for logging."""
