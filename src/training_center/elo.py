@@ -1,75 +1,80 @@
-"""ELO rating calculation."""
+"""ELO rating calculation using Bradley-Terry MLE (batch, order-independent)."""
 
 from __future__ import annotations
 
-from itertools import combinations
-
 import numpy as np
 
-from training_center.game import Player, make_player, play_game
-
 INITIAL_ELO = 1500
-K_FACTOR = 32
 
 
-def update_elo(ra: float, rb: float, result: float, k: float = K_FACTOR) -> tuple[float, float]:
-    """Update ELO ratings. result: 1=A wins, 0=B wins, 0.5=draw."""
-    ea = 1 / (1 + 10 ** ((rb - ra) / 400))
-    eb = 1 - ea
-    ra_new = ra + k * (result - ea)
-    rb_new = rb + k * ((1 - result) - eb)
-    return ra_new, rb_new
+def compute_elo(
+    results: dict[tuple[str, str], tuple[int, int]],
+    base_elo: float = INITIAL_ELO,
+    max_iter: int = 1000,
+    tol: float = 1e-6,
+) -> dict[str, float]:
+    """Compute ELO ratings from pairwise win counts using Bradley-Terry MLE.
 
+    Args:
+        results: {(player_a, player_b): (wins_a, wins_b), ...}
+        base_elo: ELO assigned to geometric-mean strength (default 1500).
+        max_iter: Maximum iterations for convergence.
+        tol: Convergence tolerance (max relative change in strengths).
 
-def round_robin(
-    players: list[Player],
-    games_per_pair: int = 100,
-    winning_score: int = 15,
-    seed: int | None = None,
-) -> tuple[dict[tuple[str, str], tuple[int, int]], dict[str, float]]:
-    """Run round-robin tournament. Returns (results, elo_ratings)."""
-    rng = np.random.default_rng(seed)
-    results: dict[tuple[str, str], tuple[int, int]] = {}
-    elos = {p.name: INITIAL_ELO for p in players}
+    Returns:
+        {player_name: elo_rating, ...} — order-independent ratings.
+    """
+    # Collect players
+    players: list[str] = []
+    seen: set[str] = set()
+    for a, b in results:
+        for p in (a, b):
+            if p not in seen:
+                players.append(p)
+                seen.add(p)
 
-    for p1, p2 in combinations(players, 2):
-        key = (p1.name, p2.name)
-        wins = 0
-        for _i in range(games_per_pair):
-            game_seed = int(rng.integers(0, 2**31))
-            stats = play_game(p1, p2, winning_score=winning_score, seed=game_seed)
-            result = 1 if stats.winner == "player_1" else 0
-            wins += result
-            elos[p1.name], elos[p2.name] = update_elo(elos[p1.name], elos[p2.name], result)
-        results[key] = (wins, games_per_pair - wins)
+    if len(players) < 2:
+        return {p: base_elo for p in players}
 
-    return results, elos
+    idx = {p: i for i, p in enumerate(players)}
+    n = len(players)
 
+    # Total wins per player and pairwise game counts
+    wins = np.zeros(n)
+    # Pairs: list of (i, j, n_ij) where n_ij = total games between i and j
+    pairs: list[tuple[int, int, int]] = []
+    for (a, b), (wa, wb) in results.items():
+        i, j = idx[a], idx[b]
+        wins[i] += wa
+        wins[j] += wb
+        total = wa + wb
+        if total > 0:
+            pairs.append((i, j, total))
 
-def evaluate_model(
-    model_path: str,
-    opponents: tuple[str, ...] = ("random", "builtin"),
-    games: int = 100,
-    winning_score: int = 15,
-    seed: int | None = None,
-) -> tuple[dict[str, tuple[int, int]], float]:
-    """Evaluate a single model against multiple opponents. Returns (results, model_elo)."""
-    model_player = make_player(model_path, agent="player_1")
-    rng = np.random.default_rng(seed)
-    elos: dict[str, float] = {model_player.name: INITIAL_ELO}
+    # Bradley-Terry iterative update
+    gamma = np.ones(n)
+    for _ in range(max_iter):
+        gamma_new = np.zeros(n)
+        for i, j, n_ij in pairs:
+            denom = gamma[i] + gamma[j]
+            gamma_new[i] += n_ij / denom
+            gamma_new[j] += n_ij / denom
 
-    results: dict[str, tuple[int, int]] = {}
-    for opp_spec in opponents:
-        opp = make_player(opp_spec, agent="player_2")
-        elos.setdefault(opp.name, INITIAL_ELO)
+        # Avoid division by zero for players with no games
+        mask = gamma_new > 0
+        gamma_new[mask] = wins[mask] / gamma_new[mask]
+        gamma_new[~mask] = gamma[~mask]
 
-        wins = 0
-        for _ in range(games):
-            game_seed = int(rng.integers(0, 2**31))
-            stats = play_game(model_player, opp, winning_score=winning_score, seed=game_seed)
-            result = 1 if stats.winner == "player_1" else 0
-            wins += result
-            elos[model_player.name], elos[opp.name] = update_elo(elos[model_player.name], elos[opp.name], result)
-        results[opp.name] = (wins, games - wins)
+        # Normalize to geometric mean = 1
+        gamma_new /= np.exp(np.mean(np.log(np.maximum(gamma_new, 1e-300))))
 
-    return results, elos[model_player.name]
+        # Check convergence
+        rel_change = np.max(np.abs(gamma_new - gamma) / np.maximum(gamma, 1e-300))
+        gamma = gamma_new
+        if rel_change < tol:
+            break
+
+    # Convert to ELO scale: elo = 400 * log10(gamma) + base_elo
+    elos = 400 * np.log10(np.maximum(gamma, 1e-300)) + base_elo
+
+    return {p: float(elos[idx[p]]) for p in players}
