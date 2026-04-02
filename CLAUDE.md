@@ -29,7 +29,7 @@ This repo is NOT consumed as a library by other repos. Its output is model artif
 
 ```
 src/training_center/
-├── elo.py                      # ELO rating calculation
+├── elo.py                      # ELO rating (batch Bradley-Terry MLE) + CLI
 ├── env_factory.py              # Wrapper chain construction + opponent policy swap
 ├── game.py                     # Player, play_game, make_player
 ├── metadata.py                 # Experiment metadata (commit, dirty, pika-zoo version)
@@ -51,6 +51,7 @@ uv run train-baseline         # Baseline PPO training (fixed opponent)
 uv run train-selfplay         # Self-play training (PFSP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
+uv run compute-elo            # Compute ELO from CSV/JSON matchup files
 ```
 
 ### Wrapper Chain

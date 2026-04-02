@@ -9,7 +9,7 @@ RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volle
 Trains Pikachu Volleyball AI agents using [pika-zoo](https://github.com/alphachu-volleyball/pika-zoo) environments with [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) PPO.
 
 - **Training**: PPO with self-play and PFSP (Prioritized Fictitious Self-Play)
-- **Evaluation**: ELO rating and win-rate tracking
+- **Evaluation**: ELO rating (batch Bradley-Terry MLE) and win-rate tracking
 - **Export**: ONNX models for browser-based play in [world-tournament](https://github.com/alphachu-volleyball/world-tournament)
 
 ### Pipeline
@@ -63,6 +63,10 @@ uv run train-curriculum --save-dir experiments/010 --total-iterations 200
 
 # Round-robin ELO evaluation (p1 pool × p2 pool)
 uv run evaluate-roundrobin --p1 random,builtin,experiments/001/model --p2 random,builtin,experiments/003/model --games 50
+
+# Compute ELO from existing matchup results (CSV or W&B table JSON)
+uv run compute-elo matchups.csv --p1 p1 --p2 p2 --win-rate p1_win_rate --games 100
+uv run compute-elo matchups.table.json --p1 p1 --p2 p2 --p1-wins p1_wins --p2-wins p2_wins -o elo.csv
 ```
 
 ## Training Scripts
@@ -140,7 +144,7 @@ Standalone evaluation script for comparing any set of models/AIs in a round-robi
 1. Build cross-product of p1 pool × p2 pool (including self-matchups)
 2. Pre-generate all game seeds for deterministic reproducibility
 3. Submit all games to `ProcessPoolExecutor` at once
-4. Collect results, compute per-matchup stats and ELO ratings
+4. Collect results, compute per-matchup stats and ELO ratings (batch Bradley-Terry MLE)
 5. Log as `wandb.Table` for sweep-level comparison
 
 **Key design decisions:**
@@ -202,7 +206,7 @@ Model is always evaluated on its **training side** (`--side`).
 | `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
 | `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
 | `eval/vs_{opp}/receive_avg_round_frames` | > 0 | Mean round frames when opponent serves |
-| `eval/elo` | ~1000–2000 | ELO rating across all opponents (baseline 1500) |
+| `eval/elo` | ~1000–2000 | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
 
 #### Self-play Evaluation (`{p1,p2}/eval/`)
 
