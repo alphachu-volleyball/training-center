@@ -24,7 +24,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.scripts.utils import worker_init
+from training_center.scripts.utils import setup_graceful_shutdown, worker_init
 
 
 def _play_single_game(
@@ -55,6 +55,7 @@ def _play_single_game(
 
 def main() -> None:
     ensure_stack_size()
+    setup_graceful_shutdown()
     parser = argparse.ArgumentParser(description="Round-robin evaluation with detailed stats")
     parser.add_argument("--p1", required=True, help="Comma-separated p1 players: random, builtin, or model path")
     parser.add_argument("--p2", required=True, help="Comma-separated p2 players: random, builtin, or model path")
