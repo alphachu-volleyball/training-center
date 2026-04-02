@@ -15,6 +15,8 @@ import json
 import multiprocessing
 import os
 import random
+import signal
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
+from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -497,224 +500,222 @@ def main() -> None:
     best_p1_anchor = -1.0
     best_p2_anchor = -1.0
 
-    for iteration in range(args.total_iterations):
-        step = p1_model.num_timesteps
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
 
-        # --- Evaluate ---
-        if iteration % args.eval_freq == 0:
-            p1_latest_dir = save_model(p1_model, save_dir / "p1" / "selfplay_latest", p1_cfg)
-            p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
-            _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
-            _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
-            eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
-            matchups = evaluate_selfplay_detailed(
-                str(p1_latest_dir),
-                str(p2_latest_dir),
-                games=args.eval_games,
-                winning_score=args.eval_score,
-                simplify_observation=args.simplify_observation,
-                eval_opponents=eval_opps,
-            )
+    try:
+        for iteration in range(args.total_iterations):
+            step = p1_model.num_timesteps
 
-            print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
-
-            log_data: dict = {"iteration": iteration}
-            for match, s in matchups.items():
-                print(
-                    f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
-                    f"  score: {s['avg_score']:.1f}-{s['avg_opp_score']:.1f}"
-                    f"  serve: {s['serve_win_rate'] * 100:.0f}% receive: {s['receive_win_rate'] * 100:.0f}%"
-                    f"  round: {s['avg_round_frames']:.0f}f",
-                    flush=True,
+            # --- Evaluate ---
+            if iteration % args.eval_freq == 0:
+                p1_latest_dir = save_model(p1_model, save_dir / "p1" / "selfplay_latest", p1_cfg)
+                p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
+                _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
+                _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
+                eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
+                matchups = evaluate_selfplay_detailed(
+                    str(p1_latest_dir),
+                    str(p2_latest_dir),
+                    games=args.eval_games,
+                    winning_score=args.eval_score,
+                    simplify_observation=args.simplify_observation,
+                    eval_opponents=eval_opps,
                 )
 
-                metric_keys = [
-                    "win_rate",
-                    "avg_score",
-                    "serve_win_rate",
-                    "receive_win_rate",
-                    "avg_round_frames",
-                    "std_round_frames",
-                    "action_entropy",
-                    "power_hit_rate",
-                    "ball_own_side_ratio",
-                    "serve_avg_round_frames",
-                    "receive_avg_round_frames",
-                ]
+                print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
 
-                if match.startswith("p1_vs_"):
-                    opponent = match[len("p1_vs_") :]
-                    for k in metric_keys:
-                        if k in s:
-                            log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
-
-                if match.startswith("p2_vs_"):
-                    opponent = match[len("p2_vs_") :]
-                    for k in metric_keys:
-                        if k in s:
-                            log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
-
-                if match == "p1_vs_p2":
-                    log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
-                    log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
-                    log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
-
-            # Compute ELO for p1 and p2
-            from training_center.elo import INITIAL_ELO, update_elo
-
-            for side_label in ["p1", "p2"]:
-                elo = INITIAL_ELO
+                log_data: dict = {"iteration": iteration}
                 for match, s in matchups.items():
-                    if match.startswith(f"{side_label}_vs_") and match != "p1_vs_p2":
-                        opp_elo = INITIAL_ELO
-                        wins = s["wins"]
-                        losses = s["losses"]
-                        for _ in range(wins):
-                            elo, opp_elo = update_elo(elo, opp_elo, 1)
-                        for _ in range(losses):
-                            elo, opp_elo = update_elo(elo, opp_elo, 0)
-                log_data[f"{side_label}/eval/elo"] = elo
+                    print(
+                        f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
+                        f"  score: {s['avg_score']:.1f}-{s['avg_opp_score']:.1f}"
+                        f"  serve: {s['serve_win_rate'] * 100:.0f}% receive: {s['receive_win_rate'] * 100:.0f}%"
+                        f"  round: {s['avg_round_frames']:.0f}f",
+                        flush=True,
+                    )
 
-            # PFSP pool stats update
-            p1_pfsp = _update_pool_stats(
-                str(p1_latest_dir),
-                pool_p2,
-                side="p1",
-                games=args.eval_games,
-                winning_score=args.eval_score,
-                max_eval=args.pfsp_eval_max,
-                simplify_observation=args.simplify_observation,
-                executor=eval_executor,
-            )
-            p2_pfsp = _update_pool_stats(
-                str(p2_latest_dir),
-                pool_p1,
-                side="p2",
-                games=args.eval_games,
-                winning_score=args.eval_score,
-                max_eval=args.pfsp_eval_max,
-                simplify_observation=args.simplify_observation,
-                executor=eval_executor,
-            )
-            if p1_pfsp:
-                log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
-                log_data["p1/pfsp/min_win_rate"] = p1_pfsp["min_winrate"]
-                log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
-            if p2_pfsp:
-                log_data["p2/pfsp/avg_pool_win_rate"] = p2_pfsp["avg_winrate"]
-                log_data["p2/pfsp/min_win_rate"] = p2_pfsp["min_winrate"]
-                log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
+                    metric_keys = [
+                        "win_rate",
+                        "avg_score",
+                        "serve_win_rate",
+                        "receive_win_rate",
+                        "avg_round_frames",
+                        "std_round_frames",
+                        "action_entropy",
+                        "power_hit_rate",
+                        "ball_own_side_ratio",
+                        "serve_avg_round_frames",
+                        "receive_avg_round_frames",
+                    ]
 
-            # Adaptive curriculum update
-            p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
-            p2_wr = matchups.get(f"p2_vs_{anchor_name}", {}).get("win_rate", 0)
-            if adaptive_config:
-                p1_anchor_winrate = p1_wr
-                p2_anchor_winrate = p2_wr
-                p1_bp, p1_pp = get_probs(iteration, side="p1")
-                p2_bp, p2_pp = get_probs(iteration, side="p2")
-                print(
-                    f"  [ADAPTIVE] p1: wr={p1_wr * 100:.0f}% -> anchor={p1_bp * 100:.0f}% pool={p1_pp * 100:.0f}%"
-                    f"  |  p2: wr={p2_wr * 100:.0f}% -> anchor={p2_bp * 100:.0f}% pool={p2_pp * 100:.0f}%",
-                    flush=True,
+                    if match.startswith("p1_vs_"):
+                        opponent = match[len("p1_vs_") :]
+                        for k in metric_keys:
+                            if k in s:
+                                log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
+
+                    if match.startswith("p2_vs_"):
+                        opponent = match[len("p2_vs_") :]
+                        for k in metric_keys:
+                            if k in s:
+                                log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
+
+                    if match == "p1_vs_p2":
+                        log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
+                        log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
+                        log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
+
+                # Compute ELO for p1 and p2
+                for side_label in ["p1", "p2"]:
+                    model_name = f"__{side_label}__"
+                    win_counts: dict[tuple[str, str], tuple[int, int]] = {}
+                    for match, s in matchups.items():
+                        if match.startswith(f"{side_label}_vs_") and match != "p1_vs_p2":
+                            opp_name = match[len(f"{side_label}_vs_") :]
+                            win_counts[(model_name, opp_name)] = (s["wins"], s["losses"])
+                    elos = compute_elo(win_counts)
+                    log_data[f"{side_label}/eval/elo"] = elos.get(model_name, 1500.0)
+
+                # PFSP pool stats update
+                p1_pfsp = _update_pool_stats(
+                    str(p1_latest_dir),
+                    pool_p2,
+                    side="p1",
+                    games=args.eval_games,
+                    winning_score=args.eval_score,
+                    max_eval=args.pfsp_eval_max,
+                    simplify_observation=args.simplify_observation,
+                    executor=eval_executor,
                 )
+                p2_pfsp = _update_pool_stats(
+                    str(p2_latest_dir),
+                    pool_p1,
+                    side="p2",
+                    games=args.eval_games,
+                    winning_score=args.eval_score,
+                    max_eval=args.pfsp_eval_max,
+                    simplify_observation=args.simplify_observation,
+                    executor=eval_executor,
+                )
+                if p1_pfsp:
+                    log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
+                    log_data["p1/pfsp/min_win_rate"] = p1_pfsp["min_winrate"]
+                    log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
+                if p2_pfsp:
+                    log_data["p2/pfsp/avg_pool_win_rate"] = p2_pfsp["avg_winrate"]
+                    log_data["p2/pfsp/min_win_rate"] = p2_pfsp["min_winrate"]
+                    log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
 
-            # Save best models
-            if p1_wr > best_p1_anchor:
-                best_p1_anchor = p1_wr
-                p1_best_dir = save_model(p1_model, save_dir / "p1" / "selfplay_best", p1_cfg)
-                _log_model_artifact(run, "p1-best", str(p1_best_dir))
-                print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
-            if p2_wr > best_p2_anchor:
-                best_p2_anchor = p2_wr
-                p2_best_dir = save_model(p2_model, save_dir / "p2" / "selfplay_best", p2_cfg)
-                _log_model_artifact(run, "p2-best", str(p2_best_dir))
-                print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
+                # Adaptive curriculum update
+                p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
+                p2_wr = matchups.get(f"p2_vs_{anchor_name}", {}).get("win_rate", 0)
+                if adaptive_config:
+                    p1_anchor_winrate = p1_wr
+                    p2_anchor_winrate = p2_wr
+                    p1_bp, p1_pp = get_probs(iteration, side="p1")
+                    p2_bp, p2_pp = get_probs(iteration, side="p2")
+                    print(
+                        f"  [ADAPTIVE] p1: wr={p1_wr * 100:.0f}% -> anchor={p1_bp * 100:.0f}% pool={p1_pp * 100:.0f}%"
+                        f"  |  p2: wr={p2_wr * 100:.0f}% -> anchor={p2_bp * 100:.0f}% pool={p2_pp * 100:.0f}%",
+                        flush=True,
+                    )
 
-            run.log(log_data, step=step)
+                # Save best models
+                if p1_wr > best_p1_anchor:
+                    best_p1_anchor = p1_wr
+                    p1_best_dir = save_model(p1_model, save_dir / "p1" / "selfplay_best", p1_cfg)
+                    _log_model_artifact(run, "p1-best", str(p1_best_dir))
+                    print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
+                if p2_wr > best_p2_anchor:
+                    best_p2_anchor = p2_wr
+                    p2_best_dir = save_model(p2_model, save_dir / "p2" / "selfplay_best", p2_cfg)
+                    _log_model_artifact(run, "p2-best", str(p2_best_dir))
+                    print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
-        # --- Train ---
-        p1_anchor_prob, p1_pool_prob = get_probs(iteration, side="p1")
-        p2_anchor_prob, p2_pool_prob = get_probs(iteration, side="p2")
+                run.log(log_data, step=step)
 
-        run.log(
-            {
-                "p1/curriculum/anchor_prob": p1_anchor_prob,
-                "p1/curriculum/pool_prob": p1_pool_prob,
-                "p2/curriculum/anchor_prob": p2_anchor_prob,
-                "p2/curriculum/pool_prob": p2_pool_prob,
-            },
-            step=step,
-        )
+            # --- Train ---
+            p1_anchor_prob, p1_pool_prob = get_probs(iteration, side="p1")
+            p2_anchor_prob, p2_pool_prob = get_probs(iteration, side="p2")
 
-        # Save to pool
-        if iteration % args.save_interval == 0:
-            p1_path = pool_p1.add_checkpoint(p1_model, iteration)
-            p2_path = pool_p2.add_checkpoint(p2_model, iteration)
-            _log_model_artifact(run, f"p1-pool-iter{iteration:06d}", p1_path)
-            _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
+            run.log(
+                {
+                    "p1/curriculum/anchor_prob": p1_anchor_prob,
+                    "p1/curriculum/pool_prob": p1_pool_prob,
+                    "p2/curriculum/anchor_prob": p2_anchor_prob,
+                    "p2/curriculum/pool_prob": p2_pool_prob,
+                },
+                step=step,
+            )
 
-        # Train p1 against p2 opponent
-        opp, opp_name, is_anchor = pool_p2.sample_opponent(latest_model=p2_model, anchor_prob=p1_anchor_prob)
-        if is_anchor:
-            for env in p1_envs.envs:
-                set_opponent_policy(env, anchor_policy)
-        else:
-            policy = make_opponent_policy(opp)
-            for env in p1_envs.envs:
-                set_opponent_policy(env, policy)
-        print(
-            f"  [iter {iteration}] p1 vs {opp_name} | anchor={p1_anchor_prob:.0%} pool={p1_pool_prob:.0%}",
-            flush=True,
-        )
-        p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
-        _log_sb3_metrics(run, p1_model, "p1")
+            # Save to pool
+            if iteration % args.save_interval == 0:
+                p1_path = pool_p1.add_checkpoint(p1_model, iteration)
+                p2_path = pool_p2.add_checkpoint(p2_model, iteration)
+                _log_model_artifact(run, f"p1-pool-iter{iteration:06d}", p1_path)
+                _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
 
-        # Train p2 against p1 opponent
-        opp, opp_name, is_anchor = pool_p1.sample_opponent(latest_model=p1_model, anchor_prob=p2_anchor_prob)
-        if is_anchor:
-            for env in p2_envs.envs:
-                set_opponent_policy(env, anchor_policy)
-        else:
-            policy = make_opponent_policy(opp)
-            for env in p2_envs.envs:
-                set_opponent_policy(env, policy)
-        print(
-            f"  [iter {iteration}] p2 vs {opp_name} | anchor={p2_anchor_prob:.0%} pool={p2_pool_prob:.0%}",
-            flush=True,
-        )
-        p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
-        _log_sb3_metrics(run, p2_model, "p2")
+            # Train p1 against p2 opponent
+            opp, opp_name, is_anchor = pool_p2.sample_opponent(latest_model=p2_model, anchor_prob=p1_anchor_prob)
+            if is_anchor:
+                for env in p1_envs.envs:
+                    set_opponent_policy(env, anchor_policy)
+            else:
+                policy = make_opponent_policy(opp)
+                for env in p1_envs.envs:
+                    set_opponent_policy(env, policy)
+            print(
+                f"  [iter {iteration}] p1 vs {opp_name} | anchor={p1_anchor_prob:.0%} pool={p1_pool_prob:.0%}",
+                flush=True,
+            )
+            p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            _log_sb3_metrics(run, p1_model, "p1")
 
-    # Save final models
-    p1_final_dir = save_model(p1_model, save_dir / "p1" / "selfplay_final", p1_cfg)
-    p2_final_dir = save_model(p2_model, save_dir / "p2" / "selfplay_final", p2_cfg)
-    _log_model_artifact(run, "p1-final", str(p1_final_dir))
-    _log_model_artifact(run, "p2-final", str(p2_final_dir))
+            # Train p2 against p1 opponent
+            opp, opp_name, is_anchor = pool_p1.sample_opponent(latest_model=p1_model, anchor_prob=p2_anchor_prob)
+            if is_anchor:
+                for env in p2_envs.envs:
+                    set_opponent_policy(env, anchor_policy)
+            else:
+                policy = make_opponent_policy(opp)
+                for env in p2_envs.envs:
+                    set_opponent_policy(env, policy)
+            print(
+                f"  [iter {iteration}] p2 vs {opp_name} | anchor={p2_anchor_prob:.0%} pool={p2_pool_prob:.0%}",
+                flush=True,
+            )
+            p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            _log_sb3_metrics(run, p2_model, "p2")
 
-    # Record sample videos
-    from pika_zoo.scripts.play import play
+        # Save final models
+        p1_final_dir = save_model(p1_model, save_dir / "p1" / "selfplay_final", p1_cfg)
+        p2_final_dir = save_model(p2_model, save_dir / "p2" / "selfplay_final", p2_cfg)
+        _log_model_artifact(run, "p1-final", str(p1_final_dir))
+        _log_model_artifact(run, "p2-final", str(p2_final_dir))
 
-    p1_final_zip = str(p1_final_dir / "model.zip")
-    p2_final_zip = str(p2_final_dir / "model.zip")
-    for side, model_zip in [("player_1", p1_final_zip), ("player_2", p2_final_zip)]:
-        label = "p1" if side == "player_1" else "p2"
-        for opp in eval_opps:
-            video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
-            _record_video(model_zip, side, opp, video_path)
-            run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+        # Record sample videos
+        from pika_zoo.scripts.play import play
 
-    # p1 vs p2
-    p1v2_path = str(save_dir / "p1_vs_p2.mp4")
-    play(p1=p1_final_zip, p2=p2_final_zip, winning_score=5, render=False, record=p1v2_path, seed=0)
-    run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
+        p1_final_zip = str(p1_final_dir / "model.zip")
+        p2_final_zip = str(p2_final_dir / "model.zip")
+        for side, model_zip in [("player_1", p1_final_zip), ("player_2", p2_final_zip)]:
+            label = "p1" if side == "player_1" else "p2"
+            for opp in eval_opps:
+                video_path = str(save_dir / f"{label}_vs_{opp}.mp4")
+                _record_video(model_zip, side, opp, video_path)
+                run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
-    print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
+        # p1 vs p2
+        p1v2_path = str(save_dir / "p1_vs_p2.mp4")
+        play(p1=p1_final_zip, p2=p2_final_zip, winning_score=5, render=False, record=p1v2_path, seed=0)
+        run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
 
-    eval_executor.shutdown()
-    p1_envs.close()
-    p2_envs.close()
-    run.finish()
+        print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
+    finally:
+        eval_executor.shutdown(wait=False, cancel_futures=True)
+        p1_envs.close()
+        p2_envs.close()
+        run.finish()
 
 
 if __name__ == "__main__":
