@@ -55,6 +55,7 @@ uv run train-selfplay         # Self-play training (PFSP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 uv run compute-elo            # Compute ELO from CSV/JSON matchup files
+uv run play                   # Play/record games (from pika-zoo)
 ```
 
 ### Wrapper Chain
