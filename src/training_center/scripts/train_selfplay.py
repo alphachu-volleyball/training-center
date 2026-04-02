@@ -29,7 +29,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
+from training_center.metrics import build_eval_log_data, compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.opponent_pool import OpponentPool, make_opponent_policy
 from training_center.scripts.utils import (
@@ -511,36 +511,20 @@ def main() -> None:
                         flush=True,
                     )
 
-                    metric_keys = [
-                        "win_rate",
-                        "avg_score",
-                        "serve_win_rate",
-                        "receive_win_rate",
-                        "avg_round_frames",
-                        "std_round_frames",
-                        "action_entropy",
-                        "power_hit_rate",
-                        "ball_own_side_ratio",
-                        "serve_avg_round_frames",
-                        "receive_avg_round_frames",
-                    ]
-
+                # Build per-side eval results for log_data
+                p1_results = {}
+                p2_results = {}
+                for match, s in matchups.items():
                     if match.startswith("p1_vs_"):
-                        opponent = match[len("p1_vs_") :]
-                        for k in metric_keys:
-                            if k in s:
-                                log_data[f"p1/eval/vs_{opponent}/{k}"] = s[k]
-
+                        p1_results[match[len("p1_vs_") :]] = s
                     if match.startswith("p2_vs_"):
-                        opponent = match[len("p2_vs_") :]
-                        for k in metric_keys:
-                            if k in s:
-                                log_data[f"p2/eval/vs_{opponent}/{k}"] = s[k]
-
+                        p2_results[match[len("p2_vs_") :]] = s
                     if match == "p1_vs_p2":
                         log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
                         log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
                         log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
+                log_data.update(build_eval_log_data(p1_results, "p1/eval"))
+                log_data.update(build_eval_log_data(p2_results, "p2/eval"))
 
                 # Compute ELO for p1 and p2
                 for side_label in ["p1", "p2"]:

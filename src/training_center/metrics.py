@@ -104,3 +104,39 @@ def compute_eval_metrics(record: GamesRecord, model_side: str) -> dict[str, floa
     )
 
     return metrics
+
+
+EVAL_METRIC_KEYS = [
+    "win_rate",
+    "avg_score",
+    "serve_win_rate",
+    "receive_win_rate",
+    "avg_round_frames",
+    "std_round_frames",
+    "action_entropy",
+    "power_hit_rate",
+    "ball_own_side_ratio",
+    "serve_avg_round_frames",
+    "receive_avg_round_frames",
+]
+
+
+def build_eval_log_data(
+    results: dict[str, dict],
+    prefix: str,
+) -> dict[str, float]:
+    """Build a wandb log_data dict from eval results.
+
+    Args:
+        results: {opponent_name: {metric: value, ...}, ...}
+        prefix: Key prefix (e.g. "eval", "p1/eval", "curriculum").
+
+    Returns:
+        Flat dict like {"eval/vs_builtin/win_rate": 0.8, ...}
+    """
+    log_data: dict[str, float] = {}
+    for opp_name, r in results.items():
+        for k in EVAL_METRIC_KEYS:
+            if k in r:
+                log_data[f"{prefix}/vs_{opp_name}/{k}"] = r[k]
+    return log_data

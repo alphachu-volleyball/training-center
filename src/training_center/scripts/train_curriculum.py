@@ -27,7 +27,7 @@ from training_center.curriculum_pool import CurriculumPool
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
+from training_center.metrics import build_eval_log_data, compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
     parse_noise,
@@ -255,20 +255,7 @@ def main() -> None:
                 log_data["curriculum/min_win_rate"] = status["min_win_rate"]
                 log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
 
-                for opp_name, r in results.items():
-                    log_data[f"curriculum/vs_{opp_name}/win_rate"] = r["win_rate"]
-                    log_data[f"curriculum/vs_{opp_name}/avg_score"] = r["avg_score"]
-                    for k in [
-                        "serve_win_rate",
-                        "receive_win_rate",
-                        "avg_round_frames",
-                        "std_round_frames",
-                        "action_entropy",
-                        "power_hit_rate",
-                        "ball_own_side_ratio",
-                    ]:
-                        if k in r:
-                            log_data[f"curriculum/vs_{opp_name}/{k}"] = r[k]
+                log_data.update(build_eval_log_data(results, "curriculum"))
 
                 run.log(log_data, step=step)
 

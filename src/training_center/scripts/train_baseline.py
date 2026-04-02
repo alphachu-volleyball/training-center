@@ -24,7 +24,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
+from training_center.metrics import build_eval_log_data, compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
     parse_noise,
@@ -179,26 +179,10 @@ class EvalCallback(BaseCallback):
                 losses = len(r["game_winners"]) - wins
                 win_counts[(model_name, opp_name)] = (wins, losses)
 
-                log_data[f"eval/vs_{opp_name}/win_rate"] = r["win_rate"]
-                log_data[f"eval/vs_{opp_name}/avg_score"] = r["avg_score"]
-                for k in [
-                    "avg_round_frames",
-                    "std_round_frames",
-                    "action_entropy",
-                    "power_hit_rate",
-                    "ball_own_side_ratio",
-                    "serve_avg_round_frames",
-                    "receive_avg_round_frames",
-                ]:
-                    if k in r:
-                        log_data[f"eval/vs_{opp_name}/{k}"] = r[k]
-                if r["serve_win_rate"] is not None:
-                    log_data[f"eval/vs_{opp_name}/serve_win_rate"] = r["serve_win_rate"]
-                if r["receive_win_rate"] is not None:
-                    log_data[f"eval/vs_{opp_name}/receive_win_rate"] = r["receive_win_rate"]
-
                 if self.verbose:
                     print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
+
+            log_data.update(build_eval_log_data(results, "eval"))
 
             elos = compute_elo(win_counts)
             elo = elos.get(model_name, 1500.0)
