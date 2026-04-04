@@ -22,6 +22,7 @@ from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
@@ -67,6 +68,24 @@ def _make_opponent(spec: str) -> AIPolicy:
         preset = int(spec.split(":")[1]) if ":" in spec else None
         return DuckllAI(preset=preset) if preset is not None else DuckllAI()
     return RandomAI()
+
+
+class OpponentShuffleCallback(BaseCallback):
+    """Reshuffle opponents per-env at the start of each rollout."""
+
+    def __init__(self, envs, pool: CurriculumPool, verbose: int = 0) -> None:
+        super().__init__(verbose)
+        self.envs = envs
+        self.pool = pool
+
+    def _on_rollout_start(self) -> None:
+        for env in self.envs.envs:
+            opp_spec = self.pool.sample_opponent()
+            set_opponent_policy(env, _make_opponent(opp_spec))
+            env.reset()
+
+    def _on_step(self) -> bool:
+        return True
 
 
 def _eval_matchup_worker(
@@ -274,13 +293,11 @@ def main() -> None:
                     print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
 
             # --- TRAIN ---
-            opp_spec = pool.sample_opponent()
-            opp_policy = _make_opponent(opp_spec)
-            for env in envs.envs:
-                set_opponent_policy(env, opp_policy)
-                env.reset()
-
-            model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            model.learn(
+                total_timesteps=args.steps_per_iter,
+                reset_num_timesteps=False,
+                callback=OpponentShuffleCallback(envs, pool),
+            )
 
             # Log SB3 metrics
             if model.logger is not None and hasattr(model.logger, "name_to_value"):
