@@ -42,7 +42,7 @@ src/training_center/
 └── scripts/
     ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
-    ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
+    ├── train_crossplay.py      # Cross-play with PFSP + curriculum (DummyVecEnv)
     ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
     └── evaluate_roundrobin.py  # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
@@ -51,7 +51,7 @@ src/training_center/
 
 ```bash
 uv run train-baseline         # Baseline PPO training (fixed opponent)
-uv run train-selfplay         # Self-play training (PFSP + curriculum)
+uv run train-crossplay        # Cross-play training (PFSP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 uv run compute-elo            # Compute ELO from CSV/JSON matchup files
@@ -74,7 +74,7 @@ PikachuVolleyballEnv (PettingZoo)
 ### VecEnv Strategy
 
 - **train_ppo**: `SubprocVecEnv` — fixed opponent, maximize CPU parallelism
-- **train_selfplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
+- **train_crossplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
 
 ## Development Environment
 

@@ -8,7 +8,7 @@ RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volle
 
 Trains Pikachu Volleyball AI agents using [pika-zoo](https://github.com/alphachu-volleyball/pika-zoo) environments with [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) PPO.
 
-- **Training**: PPO with self-play and PFSP (Prioritized Fictitious Self-Play)
+- **Training**: PPO with cross-play and PFSP (Prioritized Fictitious Play)
 - **Evaluation**: ELO rating (batch Bradley-Terry MLE) and win-rate tracking
 - **Export**: ONNX models for browser-based play in [world-tournament](https://github.com/alphachu-volleyball/world-tournament)
 
@@ -55,8 +55,8 @@ uv run ruff check .
 # Baseline PPO training (vs builtin AI)
 uv run train-baseline --opponent builtin --timesteps 1000000
 
-# Self-play training with PFSP
-uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+# Cross-play training with PFSP
+uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
 # Curriculum training (progressive difficulty)
 uv run train-curriculum --save-dir experiments/010 --total-iterations 200
@@ -73,7 +73,7 @@ uv run compute-elo matchups.table.json --p1 p1 --p2 p2 --p1-wins p1_wins --p2-wi
 
 ### `train-baseline` — Fixed-opponent PPO training
 
-Trains a single agent against a fixed rule-based opponent (random, builtin, stone, duckll). The simplest training mode — useful for bootstrapping a policy before self-play.
+Trains a single agent against a fixed rule-based opponent (random, builtin, stone, duckll). The simplest training mode — useful for bootstrapping a policy before cross-play.
 
 **Process:**
 
@@ -92,9 +92,9 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 - **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
 - **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
 
-### `train-selfplay` — PFSP self-play training
+### `train-crossplay` — PFSP cross-play training
 
-Alternately trains two agents (p1 left, p2 right) against each other and a pool of past checkpoints, using Prioritized Fictitious Self-Play.
+Alternately trains two separate agents (p1 left, p2 right) against each other and a pool of past checkpoints, using PFSP (Prioritized Fictitious Play).
 
 **Process:**
 
@@ -109,7 +109,7 @@ Alternately trains two agents (p1 left, p2 right) against each other and a pool 
 
 **Key design decisions:**
 
-- **DummyVecEnv** (not SubprocVecEnv) — self-play requires swapping the opponent policy every iteration via `set_opponent_policy()`, which directly modifies the env's internal state. This requires same-process access (`vec_env.envs[i]`), which SubprocVecEnv doesn't allow. We benchmarked a custom SubprocVecEnv with pipe-based opponent swap, but the lightweight env (low-dim vector physics) made pipe serialization overhead comparable to parallelism gains (~6% improvement), so DummyVecEnv remains the better tradeoff.
+- **DummyVecEnv** (not SubprocVecEnv) — cross-play requires swapping the opponent policy every iteration via `set_opponent_policy()`, which directly modifies the env's internal state. This requires same-process access (`vec_env.envs[i]`), which SubprocVecEnv doesn't allow. We benchmarked a custom SubprocVecEnv with pipe-based opponent swap, but the lightweight env (low-dim vector physics) made pipe serialization overhead comparable to parallelism gains (~6% improvement), so DummyVecEnv remains the better tradeoff.
 - **Parallel evaluation** — the evaluation phase (matchups + PFSP pool stats) is fully parallelized with `ProcessPoolExecutor`. Workers receive model paths, reconstruct players internally, and return serializable results. This avoids the main bottleneck as pools grow (20+ checkpoints × 10 games each).
 - **PFSP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
 - **Anchor + pool curriculum** — a configurable mix of rule-based anchor AI and pool opponents. Supports fixed ratio, schedule-based, and adaptive (win-rate-based) curricula.
@@ -133,7 +133,7 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 - **CurriculumPool** (not OpponentPool) — manages named AI specs (strings) instead of model checkpoint files. Uses same PFSP weighting formula (`1.0 - win_rate + 0.1`).
 - **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
 - **No ELO tracking** — pool composition changes on unlock, making ELO scale unstable. Use `evaluate-roundrobin` after training for absolute ELO measurement.
-- **DummyVecEnv** — same reasoning as selfplay: opponent swapping via `set_opponent_policy()`.
+- **DummyVecEnv** — same reasoning as crossplay: opponent swapping via `set_opponent_policy()`.
 
 ### `evaluate-roundrobin` — Round-robin ELO evaluation
 
@@ -191,7 +191,7 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 #### Evaluation Metrics (`eval/vs_{opp}/`)
 
 Shared across all training scripts. Logged every `--eval-freq` steps/iterations.
-`{opp}`: `random`, `builtin`, `stone`, `duckll:N`, `p2`/`p1` (selfplay only)
+`{opp}`: `random`, `builtin`, `stone`, `duckll:N`, `p2`/`p1` (crossplay only)
 
 | Metric | Range | Description |
 |--------|-------|-------------|
@@ -208,24 +208,24 @@ Shared across all training scripts. Logged every `--eval-freq` steps/iterations.
 | `eval/vs_{opp}/receive_avg_round_frames` | > 0 | Mean round frames when opponent serves |
 | `eval/elo` | varies | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
 
-Selfplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_rate`).
+Crossplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_rate`).
 
 #### Script-specific Metrics
 
 | Metric | Script | Timing | Description |
 |--------|--------|--------|-------------|
-| `{p1,p2}/pfsp/avg_pool_win_rate` | selfplay | eval_freq | Average win rate against PFSP pool |
-| `{p1,p2}/pfsp/min_win_rate` | selfplay | eval_freq | Lowest win rate in pool |
-| `{p1,p2}/pfsp/pool_size` | selfplay | eval_freq | Number of checkpoints in opponent pool |
-| `{p1,p2}/curriculum/anchor_prob` | selfplay | every iteration | Anchor AI sampling probability |
-| `{p1,p2}/curriculum/pool_prob` | selfplay | every iteration | Pool sampling probability |
+| `{p1,p2}/pfsp/avg_pool_win_rate` | crossplay | eval_freq | Average win rate against PFSP pool |
+| `{p1,p2}/pfsp/min_win_rate` | crossplay | eval_freq | Lowest win rate in pool |
+| `{p1,p2}/pfsp/pool_size` | crossplay | eval_freq | Number of checkpoints in opponent pool |
+| `{p1,p2}/curriculum/anchor_prob` | crossplay | every iteration | Anchor AI sampling probability |
+| `{p1,p2}/curriculum/pool_prob` | crossplay | every iteration | Pool sampling probability |
 | `curriculum/pool_size` | curriculum | eval_freq | Number of unlocked opponents |
 | `curriculum/min_win_rate` | curriculum | eval_freq | Lowest win rate across unlocked pool |
 | `curriculum/avg_win_rate` | curriculum | eval_freq | Average win rate across unlocked pool |
 
 #### Training Metrics (SB3 PPO)
 
-Logged every iteration (after `model.learn()`). Selfplay prefixes with `p1/` or `p2/`.
+Logged every iteration (after `model.learn()`). Crossplay prefixes with `p1/` or `p2/`.
 
 | Metric | Description |
 |--------|-------------|

@@ -1,4 +1,4 @@
-"""PFSP-based opponent pool management for self-play."""
+"""PFSP-based opponent pool management for cross-play."""
 
 from __future__ import annotations
 

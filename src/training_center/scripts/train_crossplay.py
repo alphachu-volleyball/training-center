@@ -1,11 +1,11 @@
-"""Self-play training script (PFSP + configurable anchor).
+"""Cross-play training script (PFSP + configurable anchor).
 
-Alternately trains p1_model (left) and p2_model (right).
+Alternately trains p1_model (left) and p2_model (right) as separate models.
 Opponent mix: anchor_prob (rule AI) + remaining (PFSP pool).
 
 Usage:
-  uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
-  uv run train-selfplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
+  uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+  uv run train-crossplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def _eval_checkpoint_worker(
     return name, wins
 
 
-def evaluate_selfplay_detailed(
+def evaluate_crossplay_detailed(
     p1_model_path: str,
     p2_model_path: str,
     games: int = 20,
@@ -280,7 +280,7 @@ def _update_pool_stats(
 
 def main() -> None:
     ensure_stack_size()
-    parser = argparse.ArgumentParser(description="Self-play training (PFSP + builtin anchor)")
+    parser = argparse.ArgumentParser(description="Cross-play training (PFSP + builtin anchor)")
     parser.add_argument("--total-iterations", type=int, default=100)
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
@@ -338,7 +338,7 @@ def main() -> None:
         project=args.wandb_project,
         name=args.wandb_run_name,
         config={
-            "script": "train_selfplay",
+            "script": "train_crossplay",
             "total_iterations": args.total_iterations,
             "steps_per_iter": args.steps_per_iter,
             "num_envs": args.num_envs,
@@ -486,12 +486,12 @@ def main() -> None:
 
             # --- Evaluate ---
             if iteration % args.eval_freq == 0:
-                p1_latest_dir = save_model(p1_model, save_dir / "p1" / "selfplay_latest", p1_cfg)
-                p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
+                p1_latest_dir = save_model(p1_model, save_dir / "p1" / "crossplay_latest", p1_cfg)
+                p2_latest_dir = save_model(p2_model, save_dir / "p2" / "crossplay_latest", p2_cfg)
                 _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
                 _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
                 eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
-                matchups = evaluate_selfplay_detailed(
+                matchups = evaluate_crossplay_detailed(
                     str(p1_latest_dir),
                     str(p2_latest_dir),
                     games=args.eval_games,
@@ -585,12 +585,12 @@ def main() -> None:
                 # Save best models
                 if p1_wr > best_p1_anchor:
                     best_p1_anchor = p1_wr
-                    p1_best_dir = save_model(p1_model, save_dir / "p1" / "selfplay_best", p1_cfg)
+                    p1_best_dir = save_model(p1_model, save_dir / "p1" / "crossplay_best", p1_cfg)
                     _log_model_artifact(run, "p1-best", str(p1_best_dir))
                     print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
                 if p2_wr > best_p2_anchor:
                     best_p2_anchor = p2_wr
-                    p2_best_dir = save_model(p2_model, save_dir / "p2" / "selfplay_best", p2_cfg)
+                    p2_best_dir = save_model(p2_model, save_dir / "p2" / "crossplay_best", p2_cfg)
                     _log_model_artifact(run, "p2-best", str(p2_best_dir))
                     print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
@@ -650,8 +650,8 @@ def main() -> None:
             _log_sb3_metrics(run, p2_model, "p2")
 
         # Save final models
-        p1_final_dir = save_model(p1_model, save_dir / "p1" / "selfplay_final", p1_cfg)
-        p2_final_dir = save_model(p2_model, save_dir / "p2" / "selfplay_final", p2_cfg)
+        p1_final_dir = save_model(p1_model, save_dir / "p1" / "crossplay_final", p1_cfg)
+        p2_final_dir = save_model(p2_model, save_dir / "p2" / "crossplay_final", p2_cfg)
         _log_model_artifact(run, "p1-final", str(p1_final_dir))
         _log_model_artifact(run, "p2-final", str(p2_final_dir))
 
