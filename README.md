@@ -8,7 +8,7 @@ RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volle
 
 Trains Pikachu Volleyball AI agents using [pika-zoo](https://github.com/alphachu-volleyball/pika-zoo) environments with [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) PPO.
 
-- **Training**: PPO with cross-play and PFSP (Prioritized Fictitious Play)
+- **Training**: PPO with cross-play and prioritized fictitious play (PFP)
 - **Evaluation**: ELO rating (batch Bradley-Terry MLE) and win-rate tracking
 - **Export**: ONNX models for browser-based play in [world-tournament](https://github.com/alphachu-volleyball/world-tournament)
 
@@ -21,7 +21,7 @@ graph LR
     end
 
     subgraph training-center
-        TRAIN["🟡 SB3 PPO<br>Self-play / PFSP"]
+        TRAIN["🟡 SB3 PPO<br>Cross-play / PFP"]
         EVAL["📊 Evaluation<br>ELO · Win Rate"]
         EXPORT["📦 ONNX Export"]
 
@@ -55,7 +55,7 @@ uv run ruff check .
 # Baseline PPO training (vs builtin AI)
 uv run train-baseline --opponent builtin --timesteps 1000000
 
-# Cross-play training with PFSP
+# Cross-play training with PFP
 uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
 # Curriculum training (progressive difficulty)
@@ -92,26 +92,26 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 - **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
 - **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
 
-### `train-crossplay` — PFSP cross-play training
+### `train-crossplay` — PFP cross-play training
 
-Alternately trains two separate agents (p1 left, p2 right) against each other and a pool of past checkpoints, using PFSP (Prioritized Fictitious Play).
+Alternately trains two separate agents (p1 left, p2 right) against each other and a pool of past checkpoints, using prioritized fictitious play.
 
 **Process:**
 
 1. Create `DummyVecEnv` for both p1 and p2 (opponent must be swappable in-place)
 2. Initialize two PPO models
 3. For each iteration:
-   - **Evaluate** (every `--eval-freq` iters): 5 matchups + PFSP pool stats, all in parallel via `ProcessPoolExecutor`
+   - **Evaluate** (every `--eval-freq` iters): 5 matchups + PFP pool stats, all in parallel via `ProcessPoolExecutor`
    - **Save** checkpoint to opponent pool (every `--save-interval` iters)
-   - **Train p1**: sample opponent from p2 pool (PFSP) or anchor AI, swap opponent policy, `model.learn(steps_per_iter)`
+   - **Train p1**: sample opponent from p2 pool (PFP) or anchor AI, swap opponent policy, `model.learn(steps_per_iter)`
    - **Train p2**: same against p1 pool
 4. Saves final models + records sample videos
 
 **Key design decisions:**
 
 - **DummyVecEnv** (not SubprocVecEnv) — cross-play requires swapping the opponent policy every iteration via `set_opponent_policy()`, which directly modifies the env's internal state. This requires same-process access (`vec_env.envs[i]`), which SubprocVecEnv doesn't allow. We benchmarked a custom SubprocVecEnv with pipe-based opponent swap, but the lightweight env (low-dim vector physics) made pipe serialization overhead comparable to parallelism gains (~6% improvement), so DummyVecEnv remains the better tradeoff.
-- **Parallel evaluation** — the evaluation phase (matchups + PFSP pool stats) is fully parallelized with `ProcessPoolExecutor`. Workers receive model paths, reconstruct players internally, and return serializable results. This avoids the main bottleneck as pools grow (20+ checkpoints × 10 games each).
-- **PFSP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
+- **Parallel evaluation** — the evaluation phase (matchups + PFP pool stats) is fully parallelized with `ProcessPoolExecutor`. Workers receive model paths, reconstruct players internally, and return serializable results. This avoids the main bottleneck as pools grow (20+ checkpoints × 10 games each).
+- **PFP opponent sampling** — opponents are sampled with probability inversely proportional to win rate against them (weaker opponents get played more). `pool.update_stats()` runs in the main process after collecting parallel results to maintain consistent state.
 - **Anchor + pool curriculum** — a configurable mix of rule-based anchor AI and pool opponents. Supports fixed ratio, schedule-based, and adaptive (win-rate-based) curricula.
 
 ### `train-curriculum` — Progressive difficulty curriculum training
@@ -125,12 +125,12 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 3. For each iteration:
    - **Evaluate** (every `--eval-freq` iters): play against all unlocked opponents in parallel
    - **Unlock**: if min win rate across pool >= `--unlock-threshold`, unlock next opponent
-   - **Train**: PFSP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
+   - **Train**: PFP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
 4. Saves final model + records sample videos vs all unlocked opponents
 
 **Key design decisions:**
 
-- **CurriculumPool** (not OpponentPool) — manages named AI specs (strings) instead of model checkpoint files. Uses same PFSP weighting formula (`1.0 - win_rate + 0.1`).
+- **CurriculumPool** (not OpponentPool) — manages named AI specs (strings) instead of model checkpoint files. Uses same PFP weighting formula (`1.0 - win_rate + 0.1`).
 - **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
 - **No ELO tracking** — pool composition changes on unlock, making ELO scale unstable. Use `evaluate-roundrobin` after training for absolute ELO measurement.
 - **DummyVecEnv** — same reasoning as crossplay: opponent swapping via `set_opponent_policy()`.
@@ -214,9 +214,9 @@ Crossplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_r
 
 | Metric | Script | Timing | Description |
 |--------|--------|--------|-------------|
-| `{p1,p2}/pfsp/avg_pool_win_rate` | crossplay | eval_freq | Average win rate against PFSP pool |
-| `{p1,p2}/pfsp/min_win_rate` | crossplay | eval_freq | Lowest win rate in pool |
-| `{p1,p2}/pfsp/pool_size` | crossplay | eval_freq | Number of checkpoints in opponent pool |
+| `{p1,p2}/pfp/avg_pool_win_rate` | crossplay | eval_freq | Average win rate against PFP pool |
+| `{p1,p2}/pfp/min_win_rate` | crossplay | eval_freq | Lowest win rate in pool |
+| `{p1,p2}/pfp/pool_size` | crossplay | eval_freq | Number of checkpoints in opponent pool |
 | `{p1,p2}/curriculum/anchor_prob` | crossplay | every iteration | Anchor AI sampling probability |
 | `{p1,p2}/curriculum/pool_prob` | crossplay | every iteration | Pool sampling probability |
 | `curriculum/pool_size` | curriculum | eval_freq | Number of unlocked opponents |

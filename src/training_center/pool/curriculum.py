@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from collections import deque
 
-from training_center.pool.common import PFSP_WINDOW, PFSPMixin
+from training_center.pool.common import PFP_WINDOW, PFPMixin
 
 
-class CurriculumPool(PFSPMixin):
-    """PFSP opponent pool with unlock-gated difficulty ladder.
+class CurriculumPool(PFPMixin):
+    """PFP opponent pool with unlock-gated difficulty ladder.
 
     Opponents are unlocked in order when the minimum win rate across
     all currently unlocked opponents exceeds the unlock threshold.
@@ -30,7 +30,7 @@ class CurriculumPool(PFSPMixin):
         name = self.ladder[index]
         if name not in self.unlocked:
             self.unlocked.append(name)
-            self.win_stats[name] = deque(maxlen=PFSP_WINDOW)
+            self.win_stats[name] = deque(maxlen=PFP_WINDOW)
         return name
 
     def try_unlock(self) -> str | None:
@@ -52,10 +52,10 @@ class CurriculumPool(PFSPMixin):
         return self.force_unlock(next_idx)
 
     def sample_opponent(self) -> str:
-        """PFSP-weighted sampling from unlocked pool."""
+        """PFP-weighted sampling from unlocked pool."""
         if not self.unlocked:
             return self.ladder[0]
-        return self._pfsp_sample(self.unlocked)
+        return self._pfp_sample(self.unlocked)
 
     def status(self) -> dict:
         """Return pool status for logging."""

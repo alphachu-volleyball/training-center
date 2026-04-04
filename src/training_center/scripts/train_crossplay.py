@@ -1,7 +1,7 @@
-"""Cross-play training script (PFSP + configurable anchor).
+"""Cross-play training script (PFP + configurable anchor).
 
 Alternately trains p1_model (left) and p2_model (right) as separate models.
-Opponent mix: anchor_prob (rule AI) + remaining (PFSP pool).
+Opponent mix: anchor_prob (rule AI) + remaining (PFP pool).
 
 Usage:
   uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
@@ -208,7 +208,7 @@ def _update_pool_stats(
     simplify_observation: bool = False,
     executor: ProcessPoolExecutor | None = None,
 ) -> dict | None:
-    """Play current model vs pool checkpoints to update PFSP win-rates (parallel)."""
+    """Play current model vs pool checkpoints to update PFP win-rates (parallel)."""
     if not pool.checkpoints:
         return None
 
@@ -219,7 +219,7 @@ def _update_pool_stats(
         sampled = random.sample(rest, max_eval - 5)
         checkpoints = sampled + recent
 
-    print(f"  [PFSP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
+    print(f"  [PFP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
 
     rng = np.random.default_rng()
     checkpoint_seeds = {path: int(rng.integers(0, 2**31)) for path in checkpoints}
@@ -280,7 +280,7 @@ def _update_pool_stats(
 
 def main() -> None:
     ensure_stack_size()
-    parser = argparse.ArgumentParser(description="Cross-play training (PFSP + builtin anchor)")
+    parser = argparse.ArgumentParser(description="Cross-play training (PFP + builtin anchor)")
     parser.add_argument("--total-iterations", type=int, default=100)
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
@@ -309,7 +309,7 @@ def main() -> None:
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--p1-init", default=None)
     parser.add_argument("--p2-init", default=None)
-    parser.add_argument("--pfsp-eval-max", type=int, default=20)
+    parser.add_argument("--pfp-eval-max", type=int, default=20)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
@@ -473,7 +473,7 @@ def main() -> None:
         first, last = curriculum_schedule[0], curriculum_schedule[-1]
         print(f"Curriculum: anchor({anchor_name}) {first['builtin'] * 100:.0f}%->{last['builtin'] * 100:.0f}%")
     else:
-        print(f"Opponent mix: {anchor_name}={args.anchor_prob}, pool(PFSP)={1.0 - args.anchor_prob:.1f}")
+        print(f"Opponent mix: {anchor_name}={args.anchor_prob}, pool(PFP)={1.0 - args.anchor_prob:.1f}")
 
     best_p1_anchor = -1.0
     best_p2_anchor = -1.0
@@ -538,35 +538,35 @@ def main() -> None:
                     elos = compute_elo(win_counts)
                     log_data[f"{side_label}/eval/elo"] = elos.get(model_name, 1500.0)
 
-                # PFSP pool stats update
-                p1_pfsp = _update_pool_stats(
+                # PFP pool stats update
+                p1_pfp = _update_pool_stats(
                     str(p1_latest_dir),
                     pool_p2,
                     side="p1",
                     games=args.eval_games,
                     winning_score=args.eval_score,
-                    max_eval=args.pfsp_eval_max,
+                    max_eval=args.pfp_eval_max,
                     simplify_observation=args.simplify_observation,
                     executor=eval_executor,
                 )
-                p2_pfsp = _update_pool_stats(
+                p2_pfp = _update_pool_stats(
                     str(p2_latest_dir),
                     pool_p1,
                     side="p2",
                     games=args.eval_games,
                     winning_score=args.eval_score,
-                    max_eval=args.pfsp_eval_max,
+                    max_eval=args.pfp_eval_max,
                     simplify_observation=args.simplify_observation,
                     executor=eval_executor,
                 )
-                if p1_pfsp:
-                    log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
-                    log_data["p1/pfsp/min_win_rate"] = p1_pfsp["min_winrate"]
-                    log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
-                if p2_pfsp:
-                    log_data["p2/pfsp/avg_pool_win_rate"] = p2_pfsp["avg_winrate"]
-                    log_data["p2/pfsp/min_win_rate"] = p2_pfsp["min_winrate"]
-                    log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
+                if p1_pfp:
+                    log_data["p1/pfp/avg_pool_win_rate"] = p1_pfp["avg_winrate"]
+                    log_data["p1/pfp/min_win_rate"] = p1_pfp["min_winrate"]
+                    log_data["p1/pfp/pool_size"] = p1_pfp["pool_size"]
+                if p2_pfp:
+                    log_data["p2/pfp/avg_pool_win_rate"] = p2_pfp["avg_winrate"]
+                    log_data["p2/pfp/min_win_rate"] = p2_pfp["min_winrate"]
+                    log_data["p2/pfp/pool_size"] = p2_pfp["pool_size"]
 
                 # Adaptive curriculum update
                 p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
