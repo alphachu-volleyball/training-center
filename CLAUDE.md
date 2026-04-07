@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-RL training pipeline for alphachu-volleyball — self-play, evaluation, and model export.
+RL training pipeline for alphachu-volleyball — cross-play, evaluation, and model export.
 
 ### Goals
 
@@ -37,7 +37,7 @@ src/training_center/
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
 ├── pool/
 │   ├── common.py               # PFPMixin: shared win-rate tracking + PFP sampling
-│   ├── opponent.py             # OpponentPool: model checkpoint pool for self-play
+│   ├── opponent.py             # OpponentPool: model checkpoint pool for cross-play
 │   └── curriculum.py           # CurriculumPool: unlock-gated AI ladder
 └── scripts/
     ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
@@ -69,7 +69,7 @@ PikachuVolleyballEnv (PettingZoo)
   → ConvertSingleAgent (gym.Env for SB3)
 ```
 
-`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for self-play.
+`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for cross-play.
 
 ### VecEnv Strategy
 
@@ -173,7 +173,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 
 | Category | Use |
 |----------|-----|
-| `training` | Model training — baseline, selfplay, sweeps |
+| `training` | Model training — baseline, crossplay, sweeps |
 | `evaluation` | Model-vs-model assessment, ELO measurement |
 | `analysis` | Metric validation, environment/opponent study, reproducibility |
 | `report` | W&B Report summarizing multiple experiments |

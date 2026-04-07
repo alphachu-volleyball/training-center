@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
-RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volleyball) — self-play, evaluation, and model export.
+RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volleyball) — cross-play, evaluation, and model export.
 
 ## Overview
 

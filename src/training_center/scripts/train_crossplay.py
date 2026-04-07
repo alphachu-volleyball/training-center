@@ -461,7 +461,7 @@ def main() -> None:
     mp_context = multiprocessing.get_context("forkserver")
     eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context, initializer=worker_init)
 
-    print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
+    print(f"Cross-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
     if adaptive_config:
         first, last = adaptive_config["thresholds"][0], adaptive_config["thresholds"][-1]
