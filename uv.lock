@@ -964,8 +964,8 @@ wheels = [
 
 [[package]]
 name = "pika-zoo"
-version = "1.4.0"
-source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.4.0#c194885c62eb1c36930201fa522948fb5f7ddbf3" }
+version = "1.5.0"
+source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.5.0#a41ec88ed8a1bf4f235c57cc73548e1123899687" }
 dependencies = [
     { name = "gymnasium" },
     { name = "numpy" },
@@ -1500,8 +1500,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.4.0" },
-    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.4.0" },
+    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.5.0" },
+    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.5.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
