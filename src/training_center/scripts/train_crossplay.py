@@ -1,11 +1,11 @@
-"""Self-play training script (PFSP + configurable anchor).
+"""Cross-play training script (PFP + configurable anchor).
 
-Alternately trains p1_model (left) and p2_model (right).
-Opponent mix: anchor_prob (rule AI) + remaining (PFSP pool).
+Alternately trains p1_model (left) and p2_model (right) as separate models.
+Opponent mix: anchor_prob (rule AI) + remaining (PFP pool).
 
 Usage:
-  uv run train-selfplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
-  uv run train-selfplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
+  uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
+  uv run train-crossplay --p1-init exp/001/p1 --p2-init exp/001/p2 --save-dir experiments/002
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def _eval_checkpoint_worker(
     return name, wins
 
 
-def evaluate_selfplay_detailed(
+def evaluate_crossplay_detailed(
     p1_model_path: str,
     p2_model_path: str,
     games: int = 20,
@@ -208,7 +208,7 @@ def _update_pool_stats(
     simplify_observation: bool = False,
     executor: ProcessPoolExecutor | None = None,
 ) -> dict | None:
-    """Play current model vs pool checkpoints to update PFSP win-rates (parallel)."""
+    """Play current model vs pool checkpoints to update PFP win-rates (parallel)."""
     if not pool.checkpoints:
         return None
 
@@ -219,7 +219,7 @@ def _update_pool_stats(
         sampled = random.sample(rest, max_eval - 5)
         checkpoints = sampled + recent
 
-    print(f"  [PFSP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
+    print(f"  [PFP] {side} pool update: {len(checkpoints)}/{len(pool.checkpoints)} checkpoints", flush=True)
 
     rng = np.random.default_rng()
     checkpoint_seeds = {path: int(rng.integers(0, 2**31)) for path in checkpoints}
@@ -280,7 +280,7 @@ def _update_pool_stats(
 
 def main() -> None:
     ensure_stack_size()
-    parser = argparse.ArgumentParser(description="Self-play training (PFSP + builtin anchor)")
+    parser = argparse.ArgumentParser(description="Cross-play training (PFP + builtin anchor)")
     parser.add_argument("--total-iterations", type=int, default=100)
     parser.add_argument("--steps-per-iter", type=int, default=20000)
     parser.add_argument("--num-envs", type=int, default=8)
@@ -309,7 +309,7 @@ def main() -> None:
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--p1-init", default=None)
     parser.add_argument("--p2-init", default=None)
-    parser.add_argument("--pfsp-eval-max", type=int, default=20)
+    parser.add_argument("--pfp-eval-max", type=int, default=20)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
@@ -338,7 +338,7 @@ def main() -> None:
         project=args.wandb_project,
         name=args.wandb_run_name,
         config={
-            "script": "train_selfplay",
+            "script": "train_crossplay",
             "total_iterations": args.total_iterations,
             "steps_per_iter": args.steps_per_iter,
             "num_envs": args.num_envs,
@@ -461,7 +461,7 @@ def main() -> None:
     mp_context = multiprocessing.get_context("forkserver")
     eval_executor = ProcessPoolExecutor(max_workers=eval_workers, mp_context=mp_context, initializer=worker_init)
 
-    print(f"Self-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
+    print(f"Cross-play training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), Eval workers: {eval_workers}")
     if adaptive_config:
         first, last = adaptive_config["thresholds"][0], adaptive_config["thresholds"][-1]
@@ -473,7 +473,7 @@ def main() -> None:
         first, last = curriculum_schedule[0], curriculum_schedule[-1]
         print(f"Curriculum: anchor({anchor_name}) {first['builtin'] * 100:.0f}%->{last['builtin'] * 100:.0f}%")
     else:
-        print(f"Opponent mix: {anchor_name}={args.anchor_prob}, pool(PFSP)={1.0 - args.anchor_prob:.1f}")
+        print(f"Opponent mix: {anchor_name}={args.anchor_prob}, pool(PFP)={1.0 - args.anchor_prob:.1f}")
 
     best_p1_anchor = -1.0
     best_p2_anchor = -1.0
@@ -486,12 +486,12 @@ def main() -> None:
 
             # --- Evaluate ---
             if iteration % args.eval_freq == 0:
-                p1_latest_dir = save_model(p1_model, save_dir / "p1" / "selfplay_latest", p1_cfg)
-                p2_latest_dir = save_model(p2_model, save_dir / "p2" / "selfplay_latest", p2_cfg)
+                p1_latest_dir = save_model(p1_model, save_dir / "p1" / "crossplay_latest", p1_cfg)
+                p2_latest_dir = save_model(p2_model, save_dir / "p2" / "crossplay_latest", p2_cfg)
                 _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
                 _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
                 eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
-                matchups = evaluate_selfplay_detailed(
+                matchups = evaluate_crossplay_detailed(
                     str(p1_latest_dir),
                     str(p2_latest_dir),
                     games=args.eval_games,
@@ -538,35 +538,35 @@ def main() -> None:
                     elos = compute_elo(win_counts)
                     log_data[f"{side_label}/eval/elo"] = elos.get(model_name, 1500.0)
 
-                # PFSP pool stats update
-                p1_pfsp = _update_pool_stats(
+                # PFP pool stats update
+                p1_pfp = _update_pool_stats(
                     str(p1_latest_dir),
                     pool_p2,
                     side="p1",
                     games=args.eval_games,
                     winning_score=args.eval_score,
-                    max_eval=args.pfsp_eval_max,
+                    max_eval=args.pfp_eval_max,
                     simplify_observation=args.simplify_observation,
                     executor=eval_executor,
                 )
-                p2_pfsp = _update_pool_stats(
+                p2_pfp = _update_pool_stats(
                     str(p2_latest_dir),
                     pool_p1,
                     side="p2",
                     games=args.eval_games,
                     winning_score=args.eval_score,
-                    max_eval=args.pfsp_eval_max,
+                    max_eval=args.pfp_eval_max,
                     simplify_observation=args.simplify_observation,
                     executor=eval_executor,
                 )
-                if p1_pfsp:
-                    log_data["p1/pfsp/avg_pool_win_rate"] = p1_pfsp["avg_winrate"]
-                    log_data["p1/pfsp/min_win_rate"] = p1_pfsp["min_winrate"]
-                    log_data["p1/pfsp/pool_size"] = p1_pfsp["pool_size"]
-                if p2_pfsp:
-                    log_data["p2/pfsp/avg_pool_win_rate"] = p2_pfsp["avg_winrate"]
-                    log_data["p2/pfsp/min_win_rate"] = p2_pfsp["min_winrate"]
-                    log_data["p2/pfsp/pool_size"] = p2_pfsp["pool_size"]
+                if p1_pfp:
+                    log_data["p1/pfp/avg_pool_win_rate"] = p1_pfp["avg_winrate"]
+                    log_data["p1/pfp/min_win_rate"] = p1_pfp["min_winrate"]
+                    log_data["p1/pfp/pool_size"] = p1_pfp["pool_size"]
+                if p2_pfp:
+                    log_data["p2/pfp/avg_pool_win_rate"] = p2_pfp["avg_winrate"]
+                    log_data["p2/pfp/min_win_rate"] = p2_pfp["min_winrate"]
+                    log_data["p2/pfp/pool_size"] = p2_pfp["pool_size"]
 
                 # Adaptive curriculum update
                 p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
@@ -585,12 +585,12 @@ def main() -> None:
                 # Save best models
                 if p1_wr > best_p1_anchor:
                     best_p1_anchor = p1_wr
-                    p1_best_dir = save_model(p1_model, save_dir / "p1" / "selfplay_best", p1_cfg)
+                    p1_best_dir = save_model(p1_model, save_dir / "p1" / "crossplay_best", p1_cfg)
                     _log_model_artifact(run, "p1-best", str(p1_best_dir))
                     print(f"  [BEST] p1 vs {anchor_name}: {p1_wr * 100:.0f}% (iter {iteration})", flush=True)
                 if p2_wr > best_p2_anchor:
                     best_p2_anchor = p2_wr
-                    p2_best_dir = save_model(p2_model, save_dir / "p2" / "selfplay_best", p2_cfg)
+                    p2_best_dir = save_model(p2_model, save_dir / "p2" / "crossplay_best", p2_cfg)
                     _log_model_artifact(run, "p2-best", str(p2_best_dir))
                     print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
@@ -650,8 +650,8 @@ def main() -> None:
             _log_sb3_metrics(run, p2_model, "p2")
 
         # Save final models
-        p1_final_dir = save_model(p1_model, save_dir / "p1" / "selfplay_final", p1_cfg)
-        p2_final_dir = save_model(p2_model, save_dir / "p2" / "selfplay_final", p2_cfg)
+        p1_final_dir = save_model(p1_model, save_dir / "p1" / "crossplay_final", p1_cfg)
+        p2_final_dir = save_model(p2_model, save_dir / "p2" / "crossplay_final", p2_cfg)
         _log_model_artifact(run, "p1-final", str(p1_final_dir))
         _log_model_artifact(run, "p2-final", str(p2_final_dir))
 

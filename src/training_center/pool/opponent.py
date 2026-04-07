@@ -1,4 +1,4 @@
-"""PFSP-based opponent pool management for self-play."""
+"""PFP-based opponent pool management for cross-play."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import numpy as np
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 
-from training_center.pool.common import PFSP_WINDOW, PFSPMixin
+from training_center.pool.common import PFP_WINDOW, PFPMixin
 
 
 def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
@@ -24,12 +24,12 @@ def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
     return policy
 
 
-class OpponentPool(PFSPMixin):
-    """PFSP opponent pool with sliding-window win-rate tracking.
+class OpponentPool(PFPMixin):
+    """PFP opponent pool with sliding-window win-rate tracking.
 
     Opponent selection:
     - anchor_prob: probability of choosing the anchor AI (e.g., builtin, duckll)
-    - remaining: PFSP-weighted sampling from pool (lower win-rate = higher weight)
+    - remaining: PFP-weighted sampling from pool (lower win-rate = higher weight)
     """
 
     def __init__(self, pool_dir: str, side: str, anchor: AIPolicy | None = None) -> None:
@@ -46,7 +46,7 @@ class OpponentPool(PFSPMixin):
         model.save(path)
         name = os.path.basename(path)
         self.checkpoints.append(path)
-        self.win_stats[name] = deque(maxlen=PFSP_WINDOW)
+        self.win_stats[name] = deque(maxlen=PFP_WINDOW)
         return path
 
     def sample_opponent(
@@ -64,7 +64,7 @@ class OpponentPool(PFSPMixin):
             return latest_model, "latest", False
 
         names = [os.path.basename(p) for p in self.checkpoints]
-        sampled = self._pfsp_sample(names)
+        sampled = self._pfp_sample(names)
         idx = names.index(sampled)
         path = self.checkpoints[idx]
         model = PPO.load(path, device="cpu")

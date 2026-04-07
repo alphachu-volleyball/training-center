@@ -1,4 +1,4 @@
-"""Opponent pool modules for self-play and curriculum training."""
+"""Opponent pool modules for cross-play and curriculum training."""
 
 from training_center.pool.curriculum import CurriculumPool
 from training_center.pool.opponent import OpponentPool, make_opponent_policy

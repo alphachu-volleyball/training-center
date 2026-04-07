@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-RL training pipeline for alphachu-volleyball — self-play, evaluation, and model export.
+RL training pipeline for alphachu-volleyball — cross-play, evaluation, and model export.
 
 ### Goals
 
-- Train Pikachu Volleyball AI agents using SB3 PPO with self-play / PFSP
+- Train Pikachu Volleyball AI agents using SB3 PPO with cross-play / PFP
 - Evaluate agents with ELO rating and win-rate metrics
 - Export trained models as ONNX for web deployment (world-tournament)
 
@@ -36,13 +36,13 @@ src/training_center/
 ├── metrics.py                  # Per-game frame metrics (entropy, court control, etc.)
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
 ├── pool/
-│   ├── common.py               # PFSPMixin: shared win-rate tracking + PFSP sampling
-│   ├── opponent.py             # OpponentPool: model checkpoint pool for self-play
+│   ├── common.py               # PFPMixin: shared win-rate tracking + PFP sampling
+│   ├── opponent.py             # OpponentPool: model checkpoint pool for cross-play
 │   └── curriculum.py           # CurriculumPool: unlock-gated AI ladder
 └── scripts/
     ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
-    ├── train_selfplay.py       # Self-play with PFSP + curriculum (DummyVecEnv)
+    ├── train_crossplay.py      # Cross-play with PFP + curriculum (DummyVecEnv)
     ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
     └── evaluate_roundrobin.py  # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
@@ -51,7 +51,7 @@ src/training_center/
 
 ```bash
 uv run train-baseline         # Baseline PPO training (fixed opponent)
-uv run train-selfplay         # Self-play training (PFSP + curriculum)
+uv run train-crossplay        # Cross-play training (PFP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 uv run compute-elo            # Compute ELO from CSV/JSON matchup files
@@ -69,12 +69,12 @@ PikachuVolleyballEnv (PettingZoo)
   → ConvertSingleAgent (gym.Env for SB3)
 ```
 
-`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for self-play.
+`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for cross-play.
 
 ### VecEnv Strategy
 
 - **train_ppo**: `SubprocVecEnv` — fixed opponent, maximize CPU parallelism
-- **train_selfplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
+- **train_crossplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
 
 ## Development Environment
 
@@ -137,7 +137,7 @@ fix/*  ──(squash merge)──►
 ```
 <type>(<scope>): <subject>
 
-feat(train): add PFSP opponent sampling
+feat(train): add PFP opponent sampling
 fix(eval): correct ELO calculation
 docs(readme): update pipeline diagram
 chore(ci): add ruff lint workflow
@@ -173,7 +173,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 
 | Category | Use |
 |----------|-----|
-| `training` | Model training — baseline, selfplay, sweeps |
+| `training` | Model training — baseline, crossplay, sweeps |
 | `evaluation` | Model-vs-model assessment, ELO measurement |
 | `analysis` | Metric validation, environment/opponent study, reproducibility |
 | `report` | W&B Report summarizing multiple experiments |

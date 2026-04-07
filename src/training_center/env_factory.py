@@ -115,7 +115,7 @@ def make_vec_env(
         n_envs: Number of parallel environments.
         agent: Which agent the learner controls.
         opponent_policy: Opponent policy (AIPolicy, callable, or None for random).
-        use_subproc: True for SubprocVecEnv (train_ppo), False for DummyVecEnv (self-play).
+        use_subproc: True for SubprocVecEnv (train_ppo), False for DummyVecEnv (cross-play).
         seed: Base seed (each env gets seed + rank).
         **env_kwargs: Forwarded to make_env.
     """

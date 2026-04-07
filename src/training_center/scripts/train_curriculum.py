@@ -1,7 +1,7 @@
 """Curriculum training: single-side PPO against progressively harder rule-based AIs.
 
 Starts with easy opponents, unlocks harder ones as the model improves.
-Uses PFSP sampling within the unlocked pool.
+Uses PFP sampling within the unlocked pool.
 
 Usage:
   uv run train-curriculum --save-dir experiments/010 --total-iterations 200
