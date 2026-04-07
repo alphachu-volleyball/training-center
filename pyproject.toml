@@ -6,9 +6,9 @@ readme = "README.md"
 authors = [
     { name = "namho kwon", email = "ootzk@kakao.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.4.0",
+    "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.5.0",
     "stable-baselines3>=2.4.0",
     "wandb>=0.19.0",
 ]
@@ -26,7 +26,7 @@ build-backend = "uv_build"
 
 [project.optional-dependencies]
 rendering = [
-    "pika-zoo[rendering] @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.4.0",
+    "pika-zoo[rendering] @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.5.0",
 ]
 dev = [
     "ruff>=0.11.0",
@@ -38,7 +38,7 @@ dev = [
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]

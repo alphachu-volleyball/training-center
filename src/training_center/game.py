@@ -44,7 +44,7 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
     """Create a Player from a string spec.
 
     Supported specs:
-    - 'random', 'builtin', 'stone': built-in AI policies
+    - 'random', 'builtin', 'builtin_bugfix', 'stone', 'stone_random': built-in AI policies
     - 'duckll' or 'duckll:N': DuckllAI with optional preset level (0-10)
     - directory path: loads model.zip + model.json config from inside
     - .zip file path: loads with default config (legacy compatibility)
@@ -58,8 +58,12 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
         return Player("random", policy=RandomAI())
     elif spec == "builtin":
         return Player("builtin", policy=BuiltinAI())
+    elif spec == "builtin_bugfix":
+        return Player("builtin_bugfix", policy=BuiltinAI(bugfix=True))
     elif spec == "stone":
         return Player("stone", policy=StoneAI())
+    elif spec == "stone_random":
+        return Player("stone_random", policy=StoneAI(random_position=True))
     elif spec == "duckll" or spec.startswith("duckll:"):
         if ":" in spec:
             preset = int(spec.split(":")[1])

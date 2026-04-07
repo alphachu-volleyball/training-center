@@ -12,6 +12,7 @@ from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.env.pikachu_volleyball import NoiseConfig, PikachuVolleyballEnv
 from pika_zoo.wrappers.convert_single_agent import ConvertSingleAgent
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
+from pika_zoo.wrappers.reward_channels import LinearBallPosition
 from pika_zoo.wrappers.reward_shaping import RewardShaping
 from pika_zoo.wrappers.simplify_action import SimplifyAction
 from pika_zoo.wrappers.simplify_observation import SimplifyObservation
@@ -41,7 +42,6 @@ def make_env(
     simplify_observation: bool = False,
     reward_shaping: bool = False,
     ball_position_coeff: float = 0.01,
-    normal_state_coeff: float = 0.0,
     noise: NoiseConfig | None = None,
     seed: int | None = None,
 ) -> ConvertSingleAgent:
@@ -58,7 +58,7 @@ def make_env(
     env = NormalizeObservation(env)
 
     if reward_shaping:
-        env = RewardShaping(env, ball_position_coeff=ball_position_coeff, normal_state_coeff=normal_state_coeff)
+        env = RewardShaping(env, channels=[(LinearBallPosition(), ball_position_coeff)])
 
     gym_env = ConvertSingleAgent(env, agent=agent, opponent_policy=opponent_policy)
 

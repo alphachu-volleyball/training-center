@@ -1,6 +1,6 @@
 # training-center
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
 RL training pipeline for [alphachu-volleyball](https://github.com/alphachu-volleyball) — cross-play, evaluation, and model export.
 
