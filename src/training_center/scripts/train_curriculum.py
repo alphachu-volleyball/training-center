@@ -231,10 +231,27 @@ def main() -> None:
 
     try:
         for iteration in range(args.total_iterations):
-            step = model.num_timesteps
+            # --- TRAIN ---
+            model.learn(
+                total_timesteps=args.steps_per_iter,
+                reset_num_timesteps=False,
+                callback=OpponentShuffleCallback(envs, pool),
+            )
+
+            # Log SB3 metrics
+            if model.logger is not None and hasattr(model.logger, "name_to_value"):
+                metrics = {k: v for k, v in model.logger.name_to_value.items()}
+                if metrics:
+                    run.log(metrics, step=model.num_timesteps)
+
+            # Save periodic checkpoints
+            if iteration % args.save_interval == 0:
+                save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
 
             # --- EVALUATE ---
-            if iteration % args.eval_freq == 0:
+            is_last = iteration == args.total_iterations - 1
+            if (iteration + 1) % args.eval_freq == 0 or is_last:
+                step = model.num_timesteps
                 ckpt_dir = save_model(model, save_dir / f"checkpoint_{iteration:06d}", model_cfg)
                 model_path = str(ckpt_dir / "model.zip")
 
@@ -284,30 +301,13 @@ def main() -> None:
                 run.log(log_data, step=step)
 
                 # Print
-                print(f"\n[Iter {iteration}/{args.total_iterations}, step={step}]", flush=True)
+                print(f"\n[Iter {iteration + 1}/{args.total_iterations}, step={step}]", flush=True)
                 print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
                 for opp_name, r in results.items():
                     wr = pool.get_win_rate(opp_name)
                     print(f"    vs {opp_name}: {r['wins']}W {r['losses']}L (pool wr={wr:.2f})", flush=True)
                 if newly_unlocked:
                     print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
-
-            # --- TRAIN ---
-            model.learn(
-                total_timesteps=args.steps_per_iter,
-                reset_num_timesteps=False,
-                callback=OpponentShuffleCallback(envs, pool),
-            )
-
-            # Log SB3 metrics
-            if model.logger is not None and hasattr(model.logger, "name_to_value"):
-                metrics = {k: v for k, v in model.logger.name_to_value.items()}
-                if metrics:
-                    run.log(metrics, step=model.num_timesteps)
-
-            # Save periodic checkpoints
-            if iteration % args.save_interval == 0:
-                save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
 
         # Final save
         final_dir = save_model(model, save_dir / "final", model_cfg)
