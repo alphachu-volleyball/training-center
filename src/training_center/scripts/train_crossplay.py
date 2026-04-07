@@ -484,8 +484,63 @@ def main() -> None:
         for iteration in range(args.total_iterations):
             step = p1_model.num_timesteps
 
+            # --- Train ---
+            p1_anchor_prob, p1_pool_prob = get_probs(iteration, side="p1")
+            p2_anchor_prob, p2_pool_prob = get_probs(iteration, side="p2")
+
+            run.log(
+                {
+                    "p1/curriculum/anchor_prob": p1_anchor_prob,
+                    "p1/curriculum/pool_prob": p1_pool_prob,
+                    "p2/curriculum/anchor_prob": p2_anchor_prob,
+                    "p2/curriculum/pool_prob": p2_pool_prob,
+                },
+                step=step,
+            )
+
+            # Save to pool
+            if iteration % args.save_interval == 0:
+                p1_path = pool_p1.add_checkpoint(p1_model, iteration)
+                p2_path = pool_p2.add_checkpoint(p2_model, iteration)
+                _log_model_artifact(run, f"p1-pool-iter{iteration:06d}", p1_path)
+                _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
+
+            # Train p1 against p2 opponent
+            opp, opp_name, is_anchor = pool_p2.sample_opponent(latest_model=p2_model, anchor_prob=p1_anchor_prob)
+            if is_anchor:
+                for env in p1_envs.envs:
+                    set_opponent_policy(env, anchor_policy)
+            else:
+                policy = make_opponent_policy(opp)
+                for env in p1_envs.envs:
+                    set_opponent_policy(env, policy)
+            print(
+                f"  [iter {iteration}] p1 vs {opp_name} | anchor={p1_anchor_prob:.0%} pool={p1_pool_prob:.0%}",
+                flush=True,
+            )
+            p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            _log_sb3_metrics(run, p1_model, "p1")
+
+            # Train p2 against p1 opponent
+            opp, opp_name, is_anchor = pool_p1.sample_opponent(latest_model=p1_model, anchor_prob=p2_anchor_prob)
+            if is_anchor:
+                for env in p2_envs.envs:
+                    set_opponent_policy(env, anchor_policy)
+            else:
+                policy = make_opponent_policy(opp)
+                for env in p2_envs.envs:
+                    set_opponent_policy(env, policy)
+            print(
+                f"  [iter {iteration}] p2 vs {opp_name} | anchor={p2_anchor_prob:.0%} pool={p2_pool_prob:.0%}",
+                flush=True,
+            )
+            p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
+            _log_sb3_metrics(run, p2_model, "p2")
+
             # --- Evaluate ---
-            if iteration % args.eval_freq == 0:
+            is_last = iteration == args.total_iterations - 1
+            if (iteration + 1) % args.eval_freq == 0 or is_last:
+                step = p1_model.num_timesteps
                 p1_latest_dir = save_model(p1_model, save_dir / "p1" / "crossplay_latest", p1_cfg)
                 p2_latest_dir = save_model(p2_model, save_dir / "p2" / "crossplay_latest", p2_cfg)
                 _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
@@ -500,7 +555,7 @@ def main() -> None:
                     eval_opponents=eval_opps,
                 )
 
-                print(f"\n[Iter {iteration}/{args.total_iterations}, p1_step={step}]", flush=True)
+                print(f"\n[Iter {iteration + 1}/{args.total_iterations}, p1_step={step}]", flush=True)
 
                 log_data: dict = {"iteration": iteration}
                 for match, s in matchups.items():
@@ -595,59 +650,6 @@ def main() -> None:
                     print(f"  [BEST] p2 vs {anchor_name}: {p2_wr * 100:.0f}% (iter {iteration})", flush=True)
 
                 run.log(log_data, step=step)
-
-            # --- Train ---
-            p1_anchor_prob, p1_pool_prob = get_probs(iteration, side="p1")
-            p2_anchor_prob, p2_pool_prob = get_probs(iteration, side="p2")
-
-            run.log(
-                {
-                    "p1/curriculum/anchor_prob": p1_anchor_prob,
-                    "p1/curriculum/pool_prob": p1_pool_prob,
-                    "p2/curriculum/anchor_prob": p2_anchor_prob,
-                    "p2/curriculum/pool_prob": p2_pool_prob,
-                },
-                step=step,
-            )
-
-            # Save to pool
-            if iteration % args.save_interval == 0:
-                p1_path = pool_p1.add_checkpoint(p1_model, iteration)
-                p2_path = pool_p2.add_checkpoint(p2_model, iteration)
-                _log_model_artifact(run, f"p1-pool-iter{iteration:06d}", p1_path)
-                _log_model_artifact(run, f"p2-pool-iter{iteration:06d}", p2_path)
-
-            # Train p1 against p2 opponent
-            opp, opp_name, is_anchor = pool_p2.sample_opponent(latest_model=p2_model, anchor_prob=p1_anchor_prob)
-            if is_anchor:
-                for env in p1_envs.envs:
-                    set_opponent_policy(env, anchor_policy)
-            else:
-                policy = make_opponent_policy(opp)
-                for env in p1_envs.envs:
-                    set_opponent_policy(env, policy)
-            print(
-                f"  [iter {iteration}] p1 vs {opp_name} | anchor={p1_anchor_prob:.0%} pool={p1_pool_prob:.0%}",
-                flush=True,
-            )
-            p1_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
-            _log_sb3_metrics(run, p1_model, "p1")
-
-            # Train p2 against p1 opponent
-            opp, opp_name, is_anchor = pool_p1.sample_opponent(latest_model=p1_model, anchor_prob=p2_anchor_prob)
-            if is_anchor:
-                for env in p2_envs.envs:
-                    set_opponent_policy(env, anchor_policy)
-            else:
-                policy = make_opponent_policy(opp)
-                for env in p2_envs.envs:
-                    set_opponent_policy(env, policy)
-            print(
-                f"  [iter {iteration}] p2 vs {opp_name} | anchor={p2_anchor_prob:.0%} pool={p2_pool_prob:.0%}",
-                flush=True,
-            )
-            p2_model.learn(total_timesteps=args.steps_per_iter, reset_num_timesteps=False)
-            _log_sb3_metrics(run, p2_model, "p2")
 
         # Save final models
         p1_final_dir = save_model(p1_model, save_dir / "p1" / "crossplay_final", p1_cfg)

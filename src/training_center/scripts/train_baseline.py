@@ -118,81 +118,84 @@ class EvalCallback(BaseCallback):
         self.eval_opponents = eval_opponents or ["random", "builtin"]
         self.executor = executor
 
-    def _on_step(self) -> bool:
-        if self.n_calls % self.eval_freq == 0:
-            # Save checkpoint
-            ckpt_dir = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
-            save_model(self.model, ckpt_dir, self.model_config)
-            model_path = str(ckpt_dir / "model.zip")
+    def run_eval(self) -> None:
+        """Run evaluation and log results. Called from _on_step and after training ends."""
+        # Save checkpoint
+        ckpt_dir = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+        save_model(self.model, ckpt_dir, self.model_config)
+        model_path = str(ckpt_dir / "model.zip")
 
-            artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
-            artifact.add_dir(str(ckpt_dir))
-            wandb.run.log_artifact(artifact)
+        artifact = wandb.Artifact(f"baseline-checkpoint-{self.num_timesteps}", type="model")
+        artifact.add_dir(str(ckpt_dir))
+        wandb.run.log_artifact(artifact)
 
-            # Evaluate against each opponent in parallel
-            model_side = self.model_config.side
-            so = self.model_config.observation_simplified
-            rng = np.random.default_rng()
+        # Evaluate against each opponent in parallel
+        model_side = self.model_config.side
+        so = self.model_config.observation_simplified
+        rng = np.random.default_rng()
 
-            if self.executor is not None:
-                futures = {}
-                for opp_name in self.eval_opponents:
-                    seed = int(rng.integers(0, 2**31))
-                    f = self.executor.submit(
-                        _eval_matchup_worker,
-                        model_path,
-                        model_side,
-                        opp_name,
-                        self.eval_games,
-                        5,
-                        so,
-                        seed,
-                    )
-                    futures[f] = opp_name
-
-                results: dict[str, dict] = {}
-                for f in as_completed(futures):
-                    opp_name, result = f.result()
-                    results[opp_name] = result
-            else:
-                results = {}
-                for opp_name in self.eval_opponents:
-                    seed = int(rng.integers(0, 2**31))
-                    _, result = _eval_matchup_worker(
-                        model_path,
-                        model_side,
-                        opp_name,
-                        self.eval_games,
-                        5,
-                        so,
-                        seed,
-                    )
-                    results[opp_name] = result
-
-            # Compute ELO and log
-            model_name = "__model__"
-            win_counts: dict[tuple[str, str], tuple[int, int]] = {}
-            log_data: dict = {}
-
+        if self.executor is not None:
+            futures = {}
             for opp_name in self.eval_opponents:
-                r = results[opp_name]
-                wins = sum(1 for w in r["game_winners"] if w == model_side)
-                losses = len(r["game_winners"]) - wins
-                win_counts[(model_name, opp_name)] = (wins, losses)
+                seed = int(rng.integers(0, 2**31))
+                f = self.executor.submit(
+                    _eval_matchup_worker,
+                    model_path,
+                    model_side,
+                    opp_name,
+                    self.eval_games,
+                    5,
+                    so,
+                    seed,
+                )
+                futures[f] = opp_name
 
-                if self.verbose:
-                    print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
+            results: dict[str, dict] = {}
+            for f in as_completed(futures):
+                opp_name, result = f.result()
+                results[opp_name] = result
+        else:
+            results = {}
+            for opp_name in self.eval_opponents:
+                seed = int(rng.integers(0, 2**31))
+                _, result = _eval_matchup_worker(
+                    model_path,
+                    model_side,
+                    opp_name,
+                    self.eval_games,
+                    5,
+                    so,
+                    seed,
+                )
+                results[opp_name] = result
 
-            log_data.update(build_eval_log_data(results, "eval"))
+        # Compute ELO and log
+        model_name = "__model__"
+        win_counts: dict[tuple[str, str], tuple[int, int]] = {}
+        log_data: dict = {}
 
-            elos = compute_elo(win_counts)
-            elo = elos.get(model_name, 1500.0)
-            log_data["eval/elo"] = elo
-            wandb.run.log(log_data, step=self.num_timesteps)
+        for opp_name in self.eval_opponents:
+            r = results[opp_name]
+            wins = sum(1 for w in r["game_winners"] if w == model_side)
+            losses = len(r["game_winners"]) - wins
+            win_counts[(model_name, opp_name)] = (wins, losses)
 
             if self.verbose:
-                print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
+                print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
 
+        log_data.update(build_eval_log_data(results, "eval"))
+
+        elos = compute_elo(win_counts)
+        elo = elos.get(model_name, 1500.0)
+        log_data["eval/elo"] = elo
+        wandb.run.log(log_data, step=self.num_timesteps)
+
+        if self.verbose:
+            print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
+
+    def _on_step(self) -> bool:
+        if self.n_calls > 0 and self.n_calls % self.eval_freq == 0:
+            self.run_eval()
         return True
 
 
@@ -299,23 +302,27 @@ def main() -> None:
         else None
     )
 
+    eval_cb = None
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        callbacks.append(
-            EvalCallback(
-                eval_freq=c.eval_freq // c.num_envs,
-                save_path=save_path,
-                model_config=model_cfg,
-                eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
-                executor=eval_executor,
-            )
+        eval_cb = EvalCallback(
+            eval_freq=c.eval_freq // c.num_envs,
+            save_path=save_path,
+            model_config=model_cfg,
+            eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
+            executor=eval_executor,
         )
+        callbacks.append(eval_cb)
 
     setup_graceful_shutdown()
 
     try:
         model.learn(total_timesteps=c.timesteps, callback=callbacks, reset_num_timesteps=not args.resume_steps)
+
+        # Final evaluation after training
+        if eval_cb is not None:
+            eval_cb.run_eval()
 
         save_dir = save_model(model, save_path, model_cfg)
         print(f"\nModel saved to {save_dir}")
