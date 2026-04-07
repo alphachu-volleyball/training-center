@@ -80,11 +80,12 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 1. Create `SubprocVecEnv` with N parallel environments, each running the fixed opponent
 2. Initialize PPO (or resume from `--init-model`)
 3. `model.learn()` runs continuously for `--timesteps` steps
-4. `EvalCallback` fires every `--eval-freq` steps:
+4. `EvalCallback` fires every `--eval-freq` steps during training:
    - Saves a checkpoint to disk
    - Evaluates against each opponent in parallel (`ProcessPoolExecutor`)
    - Computes ELO, win rate, detailed metrics → logs to W&B
-5. Saves final model + records sample videos
+5. Final evaluation after training completes (guarantees last metrics are logged)
+6. Saves final model + records sample videos
 
 **Key design decisions:**
 
@@ -101,10 +102,10 @@ Alternately trains two separate agents (p1 left, p2 right) against each other an
 1. Create `DummyVecEnv` for both p1 and p2 (opponent must be swappable in-place)
 2. Initialize two PPO models
 3. For each iteration:
-   - **Evaluate** (every `--eval-freq` iters): 5 matchups + PFP pool stats, all in parallel via `ProcessPoolExecutor`
    - **Save** checkpoint to opponent pool (every `--save-interval` iters)
    - **Train p1**: sample opponent from p2 pool (PFP) or anchor AI, swap opponent policy, `model.learn(steps_per_iter)`
    - **Train p2**: same against p1 pool
+   - **Evaluate** (every `--eval-freq` iters + final): 5 matchups + PFP pool stats, all in parallel via `ProcessPoolExecutor`
 4. Saves final models + records sample videos
 
 **Key design decisions:**
@@ -123,9 +124,9 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 1. Create `DummyVecEnv` (opponent swapping requires in-process access)
 2. Initialize PPO with first few opponents unlocked (stone, random, duckll:1)
 3. For each iteration:
-   - **Evaluate** (every `--eval-freq` iters): play against all unlocked opponents in parallel
-   - **Unlock**: if min win rate across pool >= `--unlock-threshold`, unlock next opponent
    - **Train**: PFP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
+   - **Evaluate** (every `--eval-freq` iters + final): play against all unlocked opponents in parallel
+   - **Unlock**: if min win rate across pool >= `--unlock-threshold`, unlock next opponent
 4. Saves final model + records sample videos vs all unlocked opponents
 
 **Key design decisions:**
