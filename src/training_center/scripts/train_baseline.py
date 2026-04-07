@@ -263,8 +263,12 @@ def main() -> None:
     def _make_opponent(spec: str) -> BuiltinAI | RandomAI | StoneAI | DuckllAI:
         if spec == "builtin":
             return BuiltinAI()
+        elif spec == "builtin_bugfix":
+            return BuiltinAI(bugfix=True)
         elif spec == "stone":
             return StoneAI()
+        elif spec == "stone_random":
+            return StoneAI(random_position=True)
         elif spec == "duckll" or spec.startswith("duckll:"):
             preset = int(spec.split(":")[1]) if ":" in spec else None
             return DuckllAI(preset=preset) if preset is not None else DuckllAI()
