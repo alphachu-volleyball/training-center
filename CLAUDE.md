@@ -21,7 +21,7 @@ alphachu-volleyball/
 ```
 
 - **Upstream**: pika-zoo (Git tag pinned dependency)
-- **Downstream**: world-tournament consumes ONNX models via GitHub Releases
+- **Downstream**: world-tournament consumes ONNX models via [HF Hub](https://huggingface.co/alphachu-volleyball)
 
 This repo is NOT consumed as a library by other repos. Its output is model artifacts, not code.
 
@@ -209,7 +209,7 @@ This links each experiment to its exact code version. No per-experiment tags nee
 | What | How |
 |------|-----|
 | Experiment → code version | commit hash in W&B metadata |
-| Deployed model | GitHub Release + W&B run link |
+| Deployed model | HF Hub repo + W&B run link |
 
 ## W&B MCP Server
 
@@ -262,7 +262,7 @@ This enables Claude Code to inspect experiment results, compare runs, and downlo
 - Never committed to Git (tens to hundreds of MB)
 - Training outputs go under `experiments/` (in `.gitignore`)
 - All models are also uploaded as W&B Artifacts
-- Deployed models are exported as ONNX and attached to GitHub Releases
+- Deployed models are exported as ONNX and uploaded to [HF Hub](https://huggingface.co/alphachu-volleyball) (one repo per model)
 
 ### experiments/ Directory
 
