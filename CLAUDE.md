@@ -8,7 +8,7 @@ RL training pipeline for alphachu-volleyball — cross-play, evaluation, and mod
 
 - Train Pikachu Volleyball AI agents using SB3 PPO with cross-play / PFP
 - Evaluate agents with ELO rating and win-rate metrics
-- Export trained models as ONNX for web deployment (world-tournament)
+- Export trained models as ONNX for web deployment (champions)
 
 ### Position in the Ecosystem
 
@@ -16,12 +16,12 @@ RL training pipeline for alphachu-volleyball — cross-play, evaluation, and mod
 alphachu-volleyball/
 ├── pika-zoo              ← RL environment + physics engine
 ├── training-center       ← this repo: training pipeline
-├── world-tournament      ← Web demo (GitHub Pages)
+├── champions             ← Web demo (GitHub Pages)
 └── vs-recorder           ← Replay analysis (future)
 ```
 
 - **Upstream**: pika-zoo (Git tag pinned dependency)
-- **Downstream**: world-tournament consumes ONNX models via [HF Hub](https://huggingface.co/alphachu-volleyball)
+- **Downstream**: champions consumes ONNX models via [HF Hub](https://huggingface.co/alphachu-volleyball)
 
 This repo is NOT consumed as a library by other repos. Its output is model artifacts, not code.
 

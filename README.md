@@ -10,7 +10,7 @@ Trains Pikachu Volleyball AI agents using [pika-zoo](https://github.com/alphachu
 
 - **Training**: PPO with cross-play and prioritized fictitious play (PFP)
 - **Evaluation**: ELO rating (batch Bradley-Terry MLE) and win-rate tracking
-- **Export**: ONNX models for browser-based play in [world-tournament](https://github.com/alphachu-volleyball/world-tournament)
+- **Export**: ONNX models for browser-based play in [champions](https://github.com/alphachu-volleyball/champions)
 
 ### Pipeline
 
@@ -33,7 +33,7 @@ graph LR
     ENV -->|train| TRAIN
     TRAIN -->|metrics · models · videos| WB["📈 W&B"]
     EVAL -->|stats| WB
-    EXPORT -->|deploy| WT["🌐 world-tournament"]
+    EXPORT -->|deploy| WT["🌐 champions"]
 ```
 
 ## Quick Start
@@ -299,4 +299,4 @@ feat/* ──(squash)──► main
 ## Related Projects
 
 - [alphachu-volleyball/pika-zoo](https://github.com/alphachu-volleyball/pika-zoo) — Pikachu Volleyball RL environment
-- [alphachu-volleyball/world-tournament](https://github.com/alphachu-volleyball/world-tournament) — Web demo (planned)
+- [alphachu-volleyball/champions](https://github.com/alphachu-volleyball/champions) — Web demo (planned)
