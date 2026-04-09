@@ -4,10 +4,12 @@ Extracts only the actor (policy) network from an SB3 PPO model and exports
 it as an ONNX file. The value network is excluded since it's not needed
 for inference.
 
-Output layout:
+Output layout (--name "alphachu-v1"):
     output_dir/
-    ├── model.onnx        # Policy network
-    └── model.json        # Wrapper configuration (copied from source)
+    ├── alphachu-v1.onnx     # Policy network
+    └── alphachu-v1.json     # Wrapper configuration (name slugified for filenames)
+
+Without --name, defaults to model.onnx / model.json.
 
 The ONNX model expects:
     Input:  "obs"            float32 [1, 35]
@@ -17,14 +19,24 @@ The ONNX model expects:
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 
-from training_center.model_config import MODEL_CONFIG_NAME, load_model_config
+from training_center.model_config import load_model_config
 
-ONNX_MODEL_NAME = "model.onnx"
+DEFAULT_STEM = "model"
+
+
+def _slugify(name: str) -> str:
+    """Convert a display name to a filesystem-safe slug."""
+    s = name.lower().strip()
+    s = re.sub(r"[^\w\s.-]", "", s)
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or DEFAULT_STEM
 
 
 class PolicyNetwork(nn.Module):
@@ -72,7 +84,8 @@ def export_onnx(model_spec: str, output_dir: str | Path, *, name: str | None = N
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    onnx_path = output_dir / ONNX_MODEL_NAME
+    stem = _slugify(config.name) if config.name else DEFAULT_STEM
+    onnx_path = output_dir / f"{stem}.onnx"
 
     torch.onnx.export(
         policy_net,
@@ -92,7 +105,7 @@ def export_onnx(model_spec: str, output_dir: str | Path, *, name: str | None = N
     onnx.checker.check_model(onnx_model)
 
     # Copy config
-    config.save(output_dir / MODEL_CONFIG_NAME)
+    config.save(output_dir / f"{stem}.json")
 
     # Print summary
     input_shape = [d.dim_value for d in onnx_model.graph.input[0].type.tensor_type.shape.dim]
