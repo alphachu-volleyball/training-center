@@ -68,8 +68,8 @@ uv run evaluate-roundrobin --p1 random,builtin,experiments/001/model --p2 random
 uv run compute-elo matchups.csv --p1 p1 --p2 p2 --win-rate p1_win_rate --games 100
 uv run compute-elo matchups.table.json --p1 p1 --p2 p2 --p1-wins p1_wins --p2-wins p2_wins -o elo.csv
 
-# Export SB3 model to ONNX for world-tournament
-uv run export-onnx experiments/016/final experiments/016/onnx --name "alphachu-v1"
+# Export SB3 model to ONNX (outputs model.onnx + model.json)
+uv run export-onnx experiments/016/final experiments/016/onnx --name "Alphachu v1"
 ```
 
 ## Training Scripts
