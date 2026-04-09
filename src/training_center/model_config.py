@@ -28,10 +28,12 @@ class ModelConfig:
     action_simplified: bool = True
     observation_simplified: bool = False
     observation_normalized: bool = True
+    name: str | None = None
 
     def save(self, path: Path) -> None:
-        """Save config as JSON."""
-        path.write_text(json.dumps(asdict(self), indent=2) + "\n")
+        """Save config as JSON. Omits None-valued fields."""
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        path.write_text(json.dumps(data, indent=2) + "\n")
 
     @classmethod
     def load(cls, path: Path) -> ModelConfig:
