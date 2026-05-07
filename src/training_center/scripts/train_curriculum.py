@@ -247,7 +247,11 @@ def main() -> None:
 
     ladder = list(args.ladder)
     if SELF_ENTRY in ladder and args.side != "both":
-        parser.error(f"--ladder containing '{SELF_ENTRY}' requires --side both (universal model).")
+        print(
+            f"Warning: '{SELF_ENTRY}' in ladder requires --side both (universal model); "
+            "stripping it and proceeding."
+        )
+        ladder = [s for s in ladder if s != SELF_ENTRY]
 
     if args.side == "both" and not args.simplify_observation:
         print("Note: --side both auto-enables --simplify-observation")
