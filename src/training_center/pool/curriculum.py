@@ -3,6 +3,11 @@
 Unlike OpponentPool (which manages model checkpoint files), CurriculumPool
 manages a ladder of named AI specs (e.g. "builtin", "duckll:5") that are
 progressively unlocked as the learner improves.
+
+The special spec ``"self"`` represents the learner's own past checkpoints
+(self-play). It only makes sense for universal models (--side both) and
+is excluded from unlock-readiness checks since its win rate hovers
+around 50% by definition.
 """
 
 from __future__ import annotations
@@ -11,12 +16,15 @@ from collections import deque
 
 from training_center.pool.common import PFP_WINDOW, PFPMixin
 
+SELF_ENTRY = "self"
+
 
 class CurriculumPool(PFPMixin):
     """PFP opponent pool with unlock-gated difficulty ladder.
 
     Opponents are unlocked in order when the minimum win rate across
-    all currently unlocked opponents exceeds the unlock threshold.
+    all currently unlocked opponents (excluding "self") exceeds the
+    unlock threshold.
     """
 
     def __init__(self, ladder: list[str], unlock_threshold: float = 0.7) -> None:
@@ -36,12 +44,18 @@ class CurriculumPool(PFPMixin):
     def try_unlock(self) -> str | None:
         """Unlock the next opponent if all current ones are mastered.
 
+        ``"self"`` entries are skipped in the readiness check (self vs
+        self ~= 50% by definition, so including it would block all
+        further unlocks).
+
         Returns the newly unlocked opponent name, or None.
         """
         if len(self.unlocked) >= len(self.ladder):
             return None
 
         for name in self.unlocked:
+            if name == SELF_ENTRY:
+                continue
             stats = self.win_stats.get(name)
             if not stats:
                 return None
@@ -58,8 +72,12 @@ class CurriculumPool(PFPMixin):
         return self._pfp_sample(self.unlocked)
 
     def status(self) -> dict:
-        """Return pool status for logging."""
-        win_rates = {name: self.get_win_rate(name) for name in self.unlocked}
+        """Return pool status for logging.
+
+        Win-rate aggregates exclude the ``"self"`` entry since it is
+        always around 50% and would skew progress signals.
+        """
+        win_rates = {name: self.get_win_rate(name) for name in self.unlocked if name != SELF_ENTRY}
         return {
             "pool_size": len(self.unlocked),
             "highest_unlocked": self.unlocked[-1] if self.unlocked else None,
