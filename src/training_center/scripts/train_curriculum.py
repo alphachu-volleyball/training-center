@@ -1,11 +1,15 @@
-"""Curriculum training: single-side PPO against progressively harder rule-based AIs.
+"""Curriculum training: PPO against progressively harder opponents.
 
 Starts with easy opponents, unlocks harder ones as the model improves.
-Uses PFP sampling within the unlocked pool.
+Uses PFP sampling within the unlocked pool. With --side both, the
+ladder may include the special spec "self" for past-checkpoint
+self-play (universal models only).
 
 Usage:
   uv run train-curriculum --save-dir experiments/010 --total-iterations 200
   uv run train-curriculum --save-dir experiments/010 --unlock-threshold 0.8
+  uv run train-curriculum --side both \\
+      --ladder random stone builtin duckll:0 ... duckll:7 self duckll:5 ... duckll:10
 """
 
 from __future__ import annotations
@@ -13,6 +17,9 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
+import random
+from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -29,7 +36,8 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
-from training_center.pool import CurriculumPool
+from training_center.pool import CurriculumPool, make_opponent_policy
+from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
     build_eval_log_data,
     parse_noise,
@@ -39,7 +47,10 @@ from training_center.scripts.utils import (
     worker_init,
 )
 
-# ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty)
+# ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty).
+# Used as the default value for --ladder. The special spec "self" can be
+# inserted (after duckll:7 mastery, e.g.) when training a universal model
+# with --side both — see module docstring for an example.
 CURRICULUM_LADDER = [
     "random",
     "stone",
@@ -58,8 +69,8 @@ CURRICULUM_LADDER = [
 ]
 
 
-def _make_opponent(spec: str) -> AIPolicy:
-    """Instantiate an AI policy from a spec string."""
+def _make_rule_opponent(spec: str) -> AIPolicy:
+    """Instantiate a rule-based AI policy from a spec string."""
     if spec == "builtin":
         return BuiltinAI()
     elif spec == "builtin_bugfix":
@@ -74,18 +85,45 @@ def _make_opponent(spec: str) -> AIPolicy:
     return RandomAI()
 
 
+def _make_self_policy(self_pool: deque[str], current_model: PPO) -> Callable[[np.ndarray], int]:
+    """Build an opponent callable from the self-play checkpoint pool.
+
+    Falls back to the current learner when the pool is empty (e.g. before
+    the first checkpoint is saved).
+    """
+    if self_pool:
+        path = random.choice(list(self_pool))
+        opponent_model = PPO.load(path, device="cpu")
+    else:
+        opponent_model = current_model
+    return make_opponent_policy(opponent_model)
+
+
 class OpponentShuffleCallback(BaseCallback):
     """Reshuffle opponents per-env at the start of each rollout."""
 
-    def __init__(self, envs, pool: CurriculumPool, verbose: int = 0) -> None:
+    def __init__(
+        self,
+        envs,
+        pool: CurriculumPool,
+        self_pool: deque[str],
+        current_model: PPO,
+        verbose: int = 0,
+    ) -> None:
         super().__init__(verbose)
         self.envs = envs
         self.pool = pool
+        self.self_pool = self_pool
+        self.current_model = current_model
 
     def _on_rollout_start(self) -> None:
         for env in self.envs.envs:
             opp_spec = self.pool.sample_opponent()
-            set_opponent_policy(env, _make_opponent(opp_spec))
+            if opp_spec == SELF_ENTRY:
+                policy = _make_self_policy(self.self_pool, self.current_model)
+            else:
+                policy = _make_rule_opponent(opp_spec)
+            set_opponent_policy(env, policy)
             env.reset()
 
     def _on_step(self) -> bool:
@@ -150,16 +188,26 @@ def _eval_matchup_worker(
 def main() -> None:
     ensure_stack_size()
 
-    ladder_str = " → ".join(CURRICULUM_LADDER)
+    default_ladder_str = " → ".join(CURRICULUM_LADDER)
     parser = argparse.ArgumentParser(
         description="Curriculum training: progressive difficulty",
-        epilog=(f"Difficulty ladder (ELO order):\n  {ladder_str}\n  Source: https://api.wandb.ai/links/ootzk/8za7h3er"),
+        epilog=(
+            f"Default ladder (ELO order from experiment 009):\n  {default_ladder_str}\n"
+            "  Source: https://api.wandb.ai/links/ootzk/8za7h3er\n\n"
+            "Add 'self' to the ladder (requires --side both) for past-checkpoint self-play."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--total-iterations", type=int, default=50)
     parser.add_argument("--steps-per-iter", type=int, default=1_000_000)
     parser.add_argument("--num-envs", type=int, default=8)
-    parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
+    parser.add_argument(
+        "--side",
+        default="player_1",
+        choices=["player_1", "player_2", "both"],
+        help="Which side(s) the learner trains on. 'both' = universal model "
+        "(envs split half P1 / half P2; auto-enables --simplify-observation).",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--noise-level", "--noise_level", type=int, default=None, choices=[0, 1, 2, 3, 4, 5], help="Noise preset level"
@@ -168,8 +216,23 @@ def main() -> None:
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
+    parser.add_argument(
+        "--ladder",
+        nargs="+",
+        default=CURRICULUM_LADDER,
+        metavar="SPEC",
+        help="Ordered list of opponent specs. Use 'self' (requires --side both) "
+        "for past-checkpoint self-play. Default: experiment-009 ELO ladder.",
+    )
     parser.add_argument("--unlock-threshold", type=float, default=0.75, help="Min win rate to unlock next opponent")
     parser.add_argument("--initial-unlocked", type=int, default=3, help="Number of opponents unlocked at start")
+    parser.add_argument(
+        "--selfplay-pool-size",
+        type=int,
+        default=20,
+        help="Max number of past checkpoints kept in the self-play pool (FIFO). "
+        "Only used when 'self' is in the ladder.",
+    )
     parser.add_argument("--eval-freq", type=int, default=5, help="Evaluate every N iterations")
     parser.add_argument("--eval-games", type=int, default=10, help="Games per opponent per evaluation")
     parser.add_argument("--eval-score", type=int, default=5, help="Winning score for eval games")
@@ -182,15 +245,27 @@ def main() -> None:
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name")
     args = parser.parse_args()
 
+    ladder = list(args.ladder)
+    if SELF_ENTRY in ladder and args.side != "both":
+        print(f"Warning: '{SELF_ENTRY}' in ladder requires --side both (universal model); stripping it and proceeding.")
+        ladder = [s for s in ladder if s != SELF_ENTRY]
+
+    if args.side == "both" and not args.simplify_observation:
+        print("Note: --side both auto-enables --simplify-observation")
+        args.simplify_observation = True
+
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
 
     noise = parse_noise(args.noise_level, args.noise_x, args.noise_x_vel, args.noise_y_vel)
 
     # Curriculum pool
-    pool = CurriculumPool(CURRICULUM_LADDER, unlock_threshold=args.unlock_threshold)
-    for i in range(min(args.initial_unlocked, len(CURRICULUM_LADDER))):
+    pool = CurriculumPool(ladder, unlock_threshold=args.unlock_threshold)
+    for i in range(min(args.initial_unlocked, len(ladder))):
         pool.force_unlock(i)
+
+    # Self-play checkpoint pool (paths). FIFO ring; populated by save_model below.
+    selfplay_pool: deque[str] = deque(maxlen=args.selfplay_pool_size)
 
     run = wandb.init(
         entity=args.wandb_entity,
@@ -204,11 +279,13 @@ def main() -> None:
             "side": args.side,
             "seed": args.seed,
             "noise_level": args.noise_level,
+            "simplify_observation": args.simplify_observation,
             "unlock_threshold": args.unlock_threshold,
             "initial_unlocked": args.initial_unlocked,
             "eval_freq": args.eval_freq,
             "ent_coef": args.ent_coef,
-            "ladder": CURRICULUM_LADDER,
+            "ladder": ladder,
+            "selfplay_pool_size": args.selfplay_pool_size if SELF_ENTRY in ladder else None,
             **meta,
         },
     )
@@ -236,12 +313,17 @@ def main() -> None:
     eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=worker_init)
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
-    print(f"Envs: {args.num_envs} (DummyVecEnv)")
+    print(f"Envs: {args.num_envs} (DummyVecEnv), side={args.side}")
     print(f"Unlock threshold: {args.unlock_threshold:.0%}")
     print(f"Initial pool: {pool.unlocked}")
-    print(f"Ladder: {CURRICULUM_LADDER}")
+    print(f"Ladder: {ladder}")
+    if SELF_ENTRY in ladder:
+        print(f"Self-play: enabled (pool size={args.selfplay_pool_size})")
 
     setup_graceful_shutdown()
+
+    # For universal models, evaluate / record videos as player_1 (symmetric by design).
+    eval_side = "player_1" if args.side == "both" else args.side
 
     try:
         for iteration in range(args.total_iterations):
@@ -249,7 +331,7 @@ def main() -> None:
             model.learn(
                 total_timesteps=args.steps_per_iter,
                 reset_num_timesteps=False,
-                callback=OpponentShuffleCallback(envs, pool),
+                callback=OpponentShuffleCallback(envs, pool, selfplay_pool, model),
             )
 
             # Log SB3 metrics
@@ -260,7 +342,9 @@ def main() -> None:
 
             # Save periodic checkpoints
             if iteration % args.save_interval == 0:
-                save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
+                iter_dir = save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
+                if SELF_ENTRY in pool.unlocked:
+                    selfplay_pool.append(str(iter_dir / "model.zip"))
 
             # --- EVALUATE ---
             is_last = iteration == args.total_iterations - 1
@@ -273,15 +357,19 @@ def main() -> None:
                 artifact.add_dir(str(ckpt_dir))
                 run.log_artifact(artifact)
 
-                # Evaluate vs all unlocked opponents (parallel)
+                # Evaluate vs all unlocked opponents (parallel). Self is excluded:
+                # self vs self ~= 50% provides no signal and can't be loaded as an
+                # opponent spec via make_player.
                 rng = np.random.default_rng()
                 futures = {}
                 for opp in pool.unlocked:
+                    if opp == SELF_ENTRY:
+                        continue
                     seed = int(rng.integers(0, 2**31))
                     f = eval_executor.submit(
                         _eval_matchup_worker,
                         model_path,
-                        args.side,
+                        eval_side,
                         opp,
                         args.eval_games,
                         args.eval_score,
@@ -298,7 +386,7 @@ def main() -> None:
                 # Update pool stats
                 for opp_name, r in results.items():
                     for winner in r["game_winners"]:
-                        pool.update_stats(opp_name, winner == args.side)
+                        pool.update_stats(opp_name, winner == eval_side)
 
                 # Try unlock
                 newly_unlocked = pool.try_unlock()
@@ -309,6 +397,8 @@ def main() -> None:
                 log_data["curriculum/pool_size"] = status["pool_size"]
                 log_data["curriculum/min_win_rate"] = status["min_win_rate"]
                 log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
+                if SELF_ENTRY in pool.unlocked:
+                    log_data["curriculum/selfplay_pool_size"] = len(selfplay_pool)
 
                 log_data.update(build_eval_log_data(results, "eval"))
 
@@ -330,11 +420,19 @@ def main() -> None:
         artifact.add_dir(str(final_dir))
         run.log_artifact(artifact)
 
-        # Record sample videos vs unlocked opponents
+        # Record sample videos vs unlocked opponents (skip self — needs a checkpoint
+        # opponent spec, not meaningful as a final demo). For universal models,
+        # record one video per side.
+        video_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
         for opp in pool.unlocked:
-            video_path = str(save_dir / f"vs_{opp}.mp4")
-            record_video(final_zip, args.side, opp, video_path)
-            run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+            if opp == SELF_ENTRY:
+                continue
+            for video_side in video_sides:
+                tag = "p1" if video_side == "player_1" else "p2"
+                suffix = f"_as_{tag}" if args.side == "both" else ""
+                video_path = str(save_dir / f"vs_{opp}{suffix}.mp4")
+                record_video(final_zip, video_side, opp, video_path)
+                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
 
         print(f"\nTraining complete. Final pool: {pool.unlocked}")
         print(f"Model saved to {final_dir}")
