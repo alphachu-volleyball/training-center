@@ -55,3 +55,18 @@ def test_make_vec_env_dummy():
     obs = vec_env.reset()
     assert obs.shape[0] == 2
     vec_env.close()
+
+
+def test_make_vec_env_both_splits_sides():
+    vec_env = make_vec_env(n_envs=4, agent="both", use_subproc=False, seed=0)
+    sides = [e.unwrapped._agent for e in vec_env.envs]
+    assert sides == ["player_1", "player_1", "player_2", "player_2"]
+    vec_env.close()
+
+
+def test_make_vec_env_both_odd_n_envs():
+    """Odd n_envs gives one fewer P1 than P2."""
+    vec_env = make_vec_env(n_envs=3, agent="both", use_subproc=False, seed=0)
+    sides = [e.unwrapped._agent for e in vec_env.envs]
+    assert sides == ["player_1", "player_2", "player_2"]
+    vec_env.close()
