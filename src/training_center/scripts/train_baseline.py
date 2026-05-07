@@ -358,13 +358,17 @@ def main() -> None:
         artifact.add_dir(str(save_dir))
         run.log_artifact(artifact)
 
-        # Record sample videos. For universal models (side="both"), record as player_1.
-        video_side = "player_1" if c.side == "both" else c.side
+        # Record sample videos. For universal models (side="both"), record one
+        # video per side so the universal claim is visible in artifacts.
+        video_sides = ["player_1", "player_2"] if c.side == "both" else [c.side]
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
         for opp in eval_opps:
-            video_path = str(save_path.parent / f"vs_{opp}.mp4")
-            record_video(model_zip, video_side, opp, video_path)
-            run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+            for video_side in video_sides:
+                tag = "p1" if video_side == "player_1" else "p2"
+                suffix = f"_as_{tag}" if c.side == "both" else ""
+                video_path = str(save_path.parent / f"vs_{opp}{suffix}.mp4")
+                record_video(model_zip, video_side, opp, video_path)
+                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
     finally:
         if eval_executor is not None:
             shutdown_executor(eval_executor)
