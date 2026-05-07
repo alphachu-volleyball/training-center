@@ -85,7 +85,14 @@ def _run_matchup_worker(
 
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
-        episode = play_game(p1, p2, winning_score=winning_score, seed=game_seed, record_frames=True)
+        episode = play_game(
+            p1,
+            p2,
+            winning_score=winning_score,
+            seed=game_seed,
+            record_frames=True,
+            simplify_observation=simplify_observation,
+        )
         all_stats.append(episode)
         if perspective == "p1":
             wins += 1 if episode.winner == "player_1" else 0
@@ -123,9 +130,21 @@ def _eval_checkpoint_worker(
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
         if side == "p1":
-            stats = play_game(current, opp, winning_score=winning_score, seed=game_seed)
+            stats = play_game(
+                current,
+                opp,
+                winning_score=winning_score,
+                seed=game_seed,
+                simplify_observation=simplify_observation,
+            )
         else:
-            stats = play_game(opp, current, winning_score=winning_score, seed=game_seed)
+            stats = play_game(
+                opp,
+                current,
+                winning_score=winning_score,
+                seed=game_seed,
+                simplify_observation=simplify_observation,
+            )
         wins.append(stats.winner == model_side)
 
     name = Path(checkpoint_path).name
