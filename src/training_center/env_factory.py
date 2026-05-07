@@ -113,16 +113,26 @@ def make_vec_env(
 
     Args:
         n_envs: Number of parallel environments.
-        agent: Which agent the learner controls.
+        agent: "player_1", "player_2", or "both". When "both", the first
+            n_envs // 2 envs use player_1 and the rest use player_2 — for
+            training a side-agnostic (universal) model with
+            simplify_observation.
         opponent_policy: Opponent policy (AIPolicy, callable, or None for random).
         use_subproc: True for SubprocVecEnv (train_ppo), False for DummyVecEnv (cross-play).
         seed: Base seed (each env gets seed + rank).
         **env_kwargs: Forwarded to make_env.
     """
+    if agent == "both":
+        half = n_envs // 2
+        sides = ["player_1"] * half + ["player_2"] * (n_envs - half)
+    else:
+        sides = [agent] * n_envs
 
     def _make(rank: int) -> Callable[[], ConvertSingleAgent]:
+        side = sides[rank]
+
         def _init() -> ConvertSingleAgent:
-            return make_env(agent=agent, opponent_policy=opponent_policy, seed=seed + rank, **env_kwargs)
+            return make_env(agent=side, opponent_policy=opponent_policy, seed=seed + rank, **env_kwargs)
 
         return _init
 

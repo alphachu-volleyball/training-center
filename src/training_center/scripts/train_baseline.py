@@ -139,8 +139,9 @@ class EvalCallback(BaseCallback):
         artifact.add_dir(str(ckpt_dir))
         wandb.run.log_artifact(artifact)
 
-        # Evaluate against each opponent in parallel
-        model_side = self.model_config.side
+        # Evaluate against each opponent in parallel.
+        # For universal models (side="both"), evaluate as player_1 — symmetric by design.
+        model_side = "player_1" if self.model_config.side == "both" else self.model_config.side
         so = self.model_config.observation_simplified
         rng = np.random.default_rng()
 
@@ -215,7 +216,13 @@ def main() -> None:
     parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument("--num-envs", type=int, default=8)
     parser.add_argument("--save-path", required=True, help="Path to save the trained model")
-    parser.add_argument("--side", default="player_1", choices=["player_1", "player_2"])
+    parser.add_argument(
+        "--side",
+        default="player_1",
+        choices=["player_1", "player_2", "both"],
+        help="Which side(s) the learner trains on. 'both' = universal model "
+        "(envs split half P1 / half P2; auto-enables --simplify-observation).",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--noise-level", "--noise_level", type=int, default=None, choices=[0, 1, 2, 3, 4, 5], help="Noise preset level"
@@ -237,6 +244,11 @@ def main() -> None:
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
     args = parser.parse_args()
+
+    # Universal model requires observation mirroring to be side-agnostic.
+    if args.side == "both" and not args.simplify_observation:
+        print("Note: --side both auto-enables --simplify-observation")
+        args.simplify_observation = True
 
     save_path = Path(args.save_path)
     meta = get_experiment_metadata()
@@ -346,12 +358,17 @@ def main() -> None:
         artifact.add_dir(str(save_dir))
         run.log_artifact(artifact)
 
-        # Record sample videos
+        # Record sample videos. For universal models (side="both"), record one
+        # video per side so the universal claim is visible in artifacts.
+        video_sides = ["player_1", "player_2"] if c.side == "both" else [c.side]
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
         for opp in eval_opps:
-            video_path = str(save_path.parent / f"vs_{opp}.mp4")
-            record_video(model_zip, c.side, opp, video_path)
-            run.log({f"video/vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
+            for video_side in video_sides:
+                tag = "p1" if video_side == "player_1" else "p2"
+                suffix = f"_as_{tag}" if c.side == "both" else ""
+                video_path = str(save_path.parent / f"vs_{opp}{suffix}.mp4")
+                record_video(model_zip, video_side, opp, video_path)
+                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
     finally:
         if eval_executor is not None:
             shutdown_executor(eval_executor)
