@@ -100,8 +100,21 @@ def build_eval_log_data(
 
 
 def record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
-    """Record a sample game video using pika-zoo's play script."""
+    """Record a sample game video using pika-zoo's play script.
+
+    If ``model_path`` points to a ``.zip`` file, the parent directory is
+    passed to ``play`` instead, so ``model.json`` (side, observation_simplified,
+    ...) is honored. Passing the bare ``.zip`` makes pika-zoo's loader skip the
+    metadata, which silently breaks universal models on the side opposite their
+    training side.
+    """
+    from pathlib import Path
+
     from pika_zoo.scripts.play import play
+
+    mp = Path(model_path)
+    if mp.is_file() and mp.suffix == ".zip":
+        model_path = str(mp.parent)
 
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
