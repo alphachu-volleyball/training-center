@@ -141,13 +141,13 @@ class EvalCallback(BaseCallback):
         wandb.run.log_artifact(artifact)
 
         # Evaluate against each opponent in parallel. For universal models we
-        # eval on both sides at args.eval_games each; the combined view drives
-        # ELO and the main `eval/...` metrics, while `eval/p1/...`,
-        # `eval/p2/...` expose any P1↔P2 asymmetry.
+        # split self.eval_games half/half so the combined eval still covers
+        # ~self.eval_games games per opponent (not 2x).
         if self.model_config.side == "both":
             eval_sides = ["player_1", "player_2"]
         else:
             eval_sides = [self.model_config.side]
+        per_side_eval_games = self.eval_games // len(eval_sides)
         so = self.model_config.observation_simplified
         rng = np.random.default_rng()
 
@@ -162,7 +162,7 @@ class EvalCallback(BaseCallback):
                         model_path,
                         side,
                         opp_name,
-                        self.eval_games,
+                        per_side_eval_games,
                         5,
                         so,
                         seed,
@@ -180,7 +180,7 @@ class EvalCallback(BaseCallback):
                         model_path,
                         side,
                         opp_name,
-                        self.eval_games,
+                        per_side_eval_games,
                         5,
                         so,
                         seed,

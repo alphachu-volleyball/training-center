@@ -324,9 +324,11 @@ def main() -> None:
 
     setup_graceful_shutdown()
 
-    # Eval/pool-update sides. For universal models we run eval on both sides
-    # (each at args.eval_games) and report per-side + combined metrics.
+    # Eval/pool-update sides. For universal models we run eval on both sides,
+    # splitting args.eval_games half/half so the combined eval still covers
+    # ~args.eval_games games per opponent (not 2x).
     eval_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
+    per_side_eval_games = args.eval_games // len(eval_sides)
 
     try:
         for iteration in range(args.total_iterations):
@@ -377,7 +379,7 @@ def main() -> None:
                             model_path,
                             side,
                             opp,
-                            args.eval_games,
+                            per_side_eval_games,
                             args.eval_score,
                             args.simplify_observation,
                             seed,
