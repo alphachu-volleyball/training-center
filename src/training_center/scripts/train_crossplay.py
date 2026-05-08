@@ -688,9 +688,18 @@ def main() -> None:
                 record_video(model_zip, side, opp, video_path)
                 run.log({f"video/{label}_vs_{opp}": wandb.Video(video_path, fps=25, format="mp4")})
 
-        # p1 vs p2
+        # p1 vs p2 — pass model directories so pika-zoo's play loader reads
+        # model.json (side, observation_simplified) instead of falling into
+        # its bare-.zip branch.
         p1v2_path = str(save_dir / "p1_vs_p2.mp4")
-        play(p1=p1_final_zip, p2=p2_final_zip, winning_score=5, render=False, record=p1v2_path, seed=0)
+        play(
+            p1=str(p1_final_dir),
+            p2=str(p2_final_dir),
+            winning_score=5,
+            render=False,
+            record=p1v2_path,
+            seed=0,
+        )
         run.log({"video/p1_vs_p2": wandb.Video(p1v2_path, fps=25, format="mp4")})
 
         print(f"\nTraining complete. Models saved to {save_dir}/p1/ and {save_dir}/p2/")
