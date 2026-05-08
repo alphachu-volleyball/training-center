@@ -28,6 +28,7 @@ from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
     build_eval_log_data,
+    combine_per_side_results,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -139,62 +140,80 @@ class EvalCallback(BaseCallback):
         artifact.add_dir(str(ckpt_dir))
         wandb.run.log_artifact(artifact)
 
-        # Evaluate against each opponent in parallel.
-        # For universal models (side="both"), evaluate as player_1 — symmetric by design.
-        model_side = "player_1" if self.model_config.side == "both" else self.model_config.side
+        # Evaluate against each opponent in parallel. For universal models we
+        # eval on both sides at args.eval_games each; the combined view drives
+        # ELO and the main `eval/...` metrics, while `eval/p1/...`,
+        # `eval/p2/...` expose any P1↔P2 asymmetry.
+        if self.model_config.side == "both":
+            eval_sides = ["player_1", "player_2"]
+        else:
+            eval_sides = [self.model_config.side]
         so = self.model_config.observation_simplified
         rng = np.random.default_rng()
 
+        results_per_side: dict[str, dict[str, dict]] = {s: {} for s in eval_sides}
         if self.executor is not None:
             futures = {}
-            for opp_name in self.eval_opponents:
-                seed = int(rng.integers(0, 2**31))
-                f = self.executor.submit(
-                    _eval_matchup_worker,
-                    model_path,
-                    model_side,
-                    opp_name,
-                    self.eval_games,
-                    5,
-                    so,
-                    seed,
-                )
-                futures[f] = opp_name
-
-            results: dict[str, dict] = {}
+            for side in eval_sides:
+                for opp_name in self.eval_opponents:
+                    seed = int(rng.integers(0, 2**31))
+                    f = self.executor.submit(
+                        _eval_matchup_worker,
+                        model_path,
+                        side,
+                        opp_name,
+                        self.eval_games,
+                        5,
+                        so,
+                        seed,
+                    )
+                    futures[f] = (side, opp_name)
             for f in as_completed(futures):
+                side, _ = futures[f]
                 opp_name, result = f.result()
-                results[opp_name] = result
+                results_per_side[side][opp_name] = result
         else:
-            results = {}
-            for opp_name in self.eval_opponents:
-                seed = int(rng.integers(0, 2**31))
-                _, result = _eval_matchup_worker(
-                    model_path,
-                    model_side,
-                    opp_name,
-                    self.eval_games,
-                    5,
-                    so,
-                    seed,
-                )
-                results[opp_name] = result
+            for side in eval_sides:
+                for opp_name in self.eval_opponents:
+                    seed = int(rng.integers(0, 2**31))
+                    _, result = _eval_matchup_worker(
+                        model_path,
+                        side,
+                        opp_name,
+                        self.eval_games,
+                        5,
+                        so,
+                        seed,
+                    )
+                    results_per_side[side][opp_name] = result
 
-        # Compute ELO and log
+        if len(eval_sides) == 2:
+            results = {
+                opp: combine_per_side_results(
+                    results_per_side["player_1"][opp],
+                    results_per_side["player_2"][opp],
+                )
+                for opp in self.eval_opponents
+            }
+        else:
+            results = results_per_side[eval_sides[0]]
+
+        # Compute ELO and log (combined wins for universal models)
         model_name = "__model__"
         win_counts: dict[tuple[str, str], tuple[int, int]] = {}
         log_data: dict = {}
 
         for opp_name in self.eval_opponents:
             r = results[opp_name]
-            wins = sum(1 for w in r["game_winners"] if w == model_side)
-            losses = len(r["game_winners"]) - wins
-            win_counts[(model_name, opp_name)] = (wins, losses)
+            win_counts[(model_name, opp_name)] = (r["wins"], r["losses"])
 
             if self.verbose:
                 print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
 
         log_data.update(build_eval_log_data(results, "eval"))
+        if len(eval_sides) == 2:
+            log_data.update(build_eval_log_data(results_per_side["player_1"], "eval/p1"))
+            log_data.update(build_eval_log_data(results_per_side["player_2"], "eval/p2"))
 
         elos = compute_elo(win_counts)
         elo = elos.get(model_name, 1500.0)

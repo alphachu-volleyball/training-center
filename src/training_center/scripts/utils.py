@@ -99,9 +99,64 @@ def build_eval_log_data(
     return log_data
 
 
+def combine_per_side_results(p1_result: dict, p2_result: dict) -> dict:
+    """Combine per-side eval results from a universal model into an aggregate.
+
+    Win counts come from re-interpreting each side's game_winners (model wins
+    when winner == its side). Numeric metrics are averaged across the two
+    sides — exact when both ran the same number of games, which is how callers
+    invoke this. The combined dict mirrors the schema produced by
+    `_eval_matchup_worker` so it plugs into existing logging and pool-update
+    paths unchanged.
+    """
+    p1_won = [w == "player_1" for w in p1_result["game_winners"]]
+    p2_won = [w == "player_2" for w in p2_result["game_winners"]]
+    won_list = p1_won + p2_won
+    total = len(won_list)
+    wins = sum(won_list)
+
+    combined: dict = {
+        "wins": wins,
+        "losses": total - wins,
+        "win_rate": wins / total if total else 0.0,
+        # Concatenated for downstream callers that iterate game_winners; values
+        # alternate between "player_1"/<other> and "player_2"/<other> without a
+        # single shared "model_side", so prefer wins/losses/win_rate above.
+        "game_winners": list(p1_result["game_winners"]) + list(p2_result["game_winners"]),
+    }
+
+    for k in EVAL_METRIC_KEYS:
+        if k == "win_rate":
+            continue  # already set above from total wins
+        v1 = p1_result.get(k)
+        v2 = p2_result.get(k)
+        if isinstance(v1, int | float) and isinstance(v2, int | float):
+            combined[k] = (v1 + v2) / 2
+
+    return combined
+
+
+def model_won_per_game(result: dict, model_side: str) -> list[bool]:
+    """Convert an eval result's game_winners into a list of model-victory bools."""
+    return [w == model_side for w in result["game_winners"]]
+
+
 def record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
-    """Record a sample game video using pika-zoo's play script."""
+    """Record a sample game video using pika-zoo's play script.
+
+    If ``model_path`` points to a ``.zip`` file, the parent directory is
+    passed to ``play`` instead, so ``model.json`` (side, observation_simplified,
+    ...) is honored. Passing the bare ``.zip`` makes pika-zoo's loader skip the
+    metadata, which silently breaks universal models on the side opposite their
+    training side.
+    """
+    from pathlib import Path
+
     from pika_zoo.scripts.play import play
+
+    mp = Path(model_path)
+    if mp.is_file() and mp.suffix == ".zip":
+        model_path = str(mp.parent)
 
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
