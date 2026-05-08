@@ -40,6 +40,8 @@ from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
     build_eval_log_data,
+    combine_per_side_results,
+    model_won_per_game,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -322,8 +324,9 @@ def main() -> None:
 
     setup_graceful_shutdown()
 
-    # For universal models, evaluate / record videos as player_1 (symmetric by design).
-    eval_side = "player_1" if args.side == "both" else args.side
+    # Eval/pool-update sides. For universal models we run eval on both sides
+    # (each at args.eval_games) and report per-side + combined metrics.
+    eval_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
 
     try:
         for iteration in range(args.total_iterations):
@@ -359,34 +362,52 @@ def main() -> None:
 
                 # Evaluate vs all unlocked opponents (parallel). Self is excluded:
                 # self vs self ~= 50% provides no signal and can't be loaded as an
-                # opponent spec via make_player.
+                # opponent spec via make_player. For universal models we eval on
+                # both sides, then combine for the main `eval/...` metrics and
+                # pool-stat updates while also exposing `eval/p1/...` and
+                # `eval/p2/...` so per-side asymmetry is visible.
                 rng = np.random.default_rng()
                 futures = {}
-                for opp in pool.unlocked:
-                    if opp == SELF_ENTRY:
-                        continue
-                    seed = int(rng.integers(0, 2**31))
-                    f = eval_executor.submit(
-                        _eval_matchup_worker,
-                        model_path,
-                        eval_side,
-                        opp,
-                        args.eval_games,
-                        args.eval_score,
-                        args.simplify_observation,
-                        seed,
-                    )
-                    futures[f] = opp
+                eval_opponents = [opp for opp in pool.unlocked if opp != SELF_ENTRY]
+                for side in eval_sides:
+                    for opp in eval_opponents:
+                        seed = int(rng.integers(0, 2**31))
+                        f = eval_executor.submit(
+                            _eval_matchup_worker,
+                            model_path,
+                            side,
+                            opp,
+                            args.eval_games,
+                            args.eval_score,
+                            args.simplify_observation,
+                            seed,
+                        )
+                        futures[f] = (side, opp)
 
-                results: dict[str, dict] = {}
+                results_per_side: dict[str, dict[str, dict]] = {s: {} for s in eval_sides}
                 for f in as_completed(futures):
+                    side, _ = futures[f]
                     opp_name, result = f.result()
-                    results[opp_name] = result
+                    results_per_side[side][opp_name] = result
 
-                # Update pool stats
-                for opp_name, r in results.items():
-                    for winner in r["game_winners"]:
-                        pool.update_stats(opp_name, winner == eval_side)
+                if len(eval_sides) == 2:
+                    results = {
+                        opp: combine_per_side_results(
+                            results_per_side["player_1"][opp],
+                            results_per_side["player_2"][opp],
+                        )
+                        for opp in eval_opponents
+                    }
+                else:
+                    results = results_per_side[eval_sides[0]]
+
+                # Pool stats: count per-game model wins from each side's eval
+                # so universal models need to win on BOTH sides to unlock.
+                for opp_name in eval_opponents:
+                    for side in eval_sides:
+                        side_result = results_per_side[side][opp_name]
+                        for won in model_won_per_game(side_result, side):
+                            pool.update_stats(opp_name, won)
 
                 # Try unlock
                 newly_unlocked = pool.try_unlock()
@@ -401,6 +422,9 @@ def main() -> None:
                     log_data["curriculum/selfplay_pool_size"] = len(selfplay_pool)
 
                 log_data.update(build_eval_log_data(results, "eval"))
+                if len(eval_sides) == 2:
+                    log_data.update(build_eval_log_data(results_per_side["player_1"], "eval/p1"))
+                    log_data.update(build_eval_log_data(results_per_side["player_2"], "eval/p2"))
 
                 run.log(log_data, step=step)
 
