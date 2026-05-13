@@ -28,6 +28,7 @@ class ModelConfig:
     action_simplified: bool = True
     observation_simplified: bool = False
     observation_normalized: bool = True
+    frame_stack: int = 1
     name: str | None = None
 
     def save(self, path: Path) -> None:

@@ -55,6 +55,9 @@ uv run ruff check .
 # Baseline PPO training (vs builtin AI)
 uv run train-baseline --opponent builtin --timesteps 1000000
 
+# Train with pika-zoo frame stacking (obs shape: 35 -> 4x35)
+uv run train-baseline --opponent builtin --frame-stack 4 --timesteps 1000000
+
 # Cross-play training with PFP
 uv run train-crossplay --total-iterations 100 --steps-per-iter 20000 --save-dir experiments/001
 
@@ -93,6 +96,7 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 **Key design decisions:**
 
 - **SubprocVecEnv** — opponent is fixed, so env parallelization works directly. Each child process runs its own env + opponent independently. This is where multicore CPU gives linear speedup.
+- **Frame stacking** — `--frame-stack N` enables pika-zoo's `FrameStack` wrapper after normalization. The saved `model.json` records the stack depth so evaluation, video recording, and ONNX export use the same observation shape.
 - **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
 - **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
 

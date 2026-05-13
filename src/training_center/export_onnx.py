@@ -10,8 +10,8 @@ Output layout:
     └── model.json        # Wrapper configuration (name field for display)
 
 The ONNX model expects:
-    Input:  "obs"            float32 [1, 35]
-    Output: "action_logits"  float32 [1, 13]
+    Input:  "obs"            float32 [batch, *observation_shape]
+    Output: "action_logits"  float32 [batch, 13]
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ def export_onnx(model_spec: str, output_dir: str | Path, *, name: str | None = N
     policy_net = PolicyNetwork(model.policy)
     policy_net.eval()
 
-    obs_size = model.observation_space.shape[0]
-    dummy_input = torch.randn(1, obs_size)
+    obs_shape = tuple(model.observation_space.shape)
+    dummy_input = torch.randn(1, *obs_shape)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,8 @@ def export_onnx(model_spec: str, output_dir: str | Path, *, name: str | None = N
     print(f"  Size:   {onnx_size_kb:.1f} KB")
     print(
         f"  Config: side={config.side}, action_simplified={config.action_simplified}, "
-        f"obs_simplified={config.observation_simplified}, obs_normalized={config.observation_normalized}"
+        f"obs_simplified={config.observation_simplified}, obs_normalized={config.observation_normalized}, "
+        f"frame_stack={config.frame_stack}"
     )
 
     return output_dir

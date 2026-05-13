@@ -80,6 +80,7 @@ def make_player(spec: str, agent: str = "player_1", simplify_observation: bool =
                 action_simplified=config.action_simplified,
                 observation_simplified=config.observation_simplified,
                 observation_normalized=config.observation_normalized,
+                frame_stack=config.frame_stack,
             ),
         )
 

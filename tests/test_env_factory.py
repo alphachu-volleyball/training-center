@@ -1,6 +1,7 @@
 """Tests for env_factory module."""
 
 import numpy as np
+import pytest
 from pika_zoo.ai import BuiltinAI
 from pika_zoo.wrappers.convert_single_agent import ConvertSingleAgent
 
@@ -22,6 +23,19 @@ def test_make_env_with_builtin():
     obs, reward, terminated, truncated, info = env.step(0)
     assert obs.shape == env.observation_space.shape
     env.close()
+
+
+def test_make_env_with_frame_stack():
+    env = make_env(agent="player_1", frame_stack=4, seed=0)
+    obs, info = env.reset()
+    assert obs.shape == env.observation_space.shape
+    assert obs.shape[0] == 4
+    env.close()
+
+
+def test_make_env_rejects_invalid_frame_stack():
+    with pytest.raises(ValueError, match="frame_stack"):
+        make_env(agent="player_1", frame_stack=0)
 
 
 def test_set_opponent_policy_callable():

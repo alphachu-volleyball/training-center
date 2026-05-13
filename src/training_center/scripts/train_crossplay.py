@@ -311,6 +311,9 @@ def main() -> None:
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
+    parser.add_argument(
+        "--frame-stack", type=int, default=1, help="Number of recent observations to stack (1=disabled)"
+    )
     parser.add_argument("--anchor", default="builtin", help="Anchor opponent: builtin, stone, duckll, duckll:N")
     parser.add_argument("--anchor-prob", type=float, default=0.6, help="Probability of anchor opponent per iteration")
     parser.add_argument("--curriculum", default=None, help="Path to curriculum JSON file")
@@ -372,6 +375,7 @@ def main() -> None:
             "noise_x_vel": noise.x_velocity_range if noise else None,
             "noise_y_vel": noise.y_velocity_range if noise else None,
             "simplify_observation": args.simplify_observation,
+            "frame_stack": args.frame_stack,
             "eval_games": args.eval_games,
             "save_dir": args.save_dir,
             **meta,
@@ -443,6 +447,7 @@ def main() -> None:
         use_subproc=False,
         seed=args.seed,
         simplify_observation=args.simplify_observation,
+        frame_stack=args.frame_stack,
         noise=noise,
     )
     p2_envs = make_vec_env(
@@ -451,12 +456,17 @@ def main() -> None:
         use_subproc=False,
         seed=args.seed + 100,
         simplify_observation=args.simplify_observation,
+        frame_stack=args.frame_stack,
         noise=noise,
     )
 
     # Model configs
-    p1_cfg = ModelConfig(side="player_1", observation_simplified=args.simplify_observation)
-    p2_cfg = ModelConfig(side="player_2", observation_simplified=args.simplify_observation)
+    p1_cfg = ModelConfig(
+        side="player_1", observation_simplified=args.simplify_observation, frame_stack=args.frame_stack
+    )
+    p2_cfg = ModelConfig(
+        side="player_2", observation_simplified=args.simplify_observation, frame_stack=args.frame_stack
+    )
 
     # Initialize models
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)
