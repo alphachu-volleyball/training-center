@@ -11,6 +11,7 @@ import numpy as np
 from pika_zoo.ai.protocol import AIPolicy
 from pika_zoo.env.pikachu_volleyball import NoiseConfig, PikachuVolleyballEnv
 from pika_zoo.wrappers.convert_single_agent import ConvertSingleAgent
+from pika_zoo.wrappers.frame_stack import FrameStack
 from pika_zoo.wrappers.normalize_observation import NormalizeObservation
 from pika_zoo.wrappers.reward_channels import LinearBallPosition
 from pika_zoo.wrappers.reward_shaping import RewardShaping
@@ -40,6 +41,7 @@ def make_env(
     winning_score: int = 15,
     serve: str = "winner",
     simplify_observation: bool = False,
+    frame_stack: int = 1,
     reward_shaping: bool = False,
     ball_position_coeff: float = 0.01,
     noise: NoiseConfig | None = None,
@@ -48,14 +50,19 @@ def make_env(
     """Build the full wrapper chain and return a gym.Env for SB3.
 
     Chain: PikachuVolleyballEnv → SimplifyAction → [SimplifyObservation]
-           → NormalizeObservation → [RewardShaping] → ConvertSingleAgent
+           → NormalizeObservation → [FrameStack] → [RewardShaping] → ConvertSingleAgent
     """
+    if frame_stack < 1:
+        raise ValueError("frame_stack must be >= 1")
+
     env = PikachuVolleyballEnv(winning_score=winning_score, serve=serve, noise=noise)
 
     env = SimplifyAction(env)
     if simplify_observation:
         env = SimplifyObservation(env)
     env = NormalizeObservation(env)
+    if frame_stack > 1:
+        env = FrameStack(env, n_frames=frame_stack)
 
     if reward_shaping:
         env = RewardShaping(env, channels=[(LinearBallPosition(), ball_position_coeff)])

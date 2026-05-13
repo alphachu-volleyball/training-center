@@ -219,6 +219,9 @@ def main() -> None:
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument(
+        "--frame-stack", type=int, default=1, help="Number of recent observations to stack (1=disabled)"
+    )
+    parser.add_argument(
         "--ladder",
         nargs="+",
         default=CURRICULUM_LADDER,
@@ -282,6 +285,7 @@ def main() -> None:
             "seed": args.seed,
             "noise_level": args.noise_level,
             "simplify_observation": args.simplify_observation,
+            "frame_stack": args.frame_stack,
             "unlock_threshold": args.unlock_threshold,
             "initial_unlocked": args.initial_unlocked,
             "eval_freq": args.eval_freq,
@@ -299,11 +303,14 @@ def main() -> None:
         use_subproc=False,
         seed=args.seed,
         simplify_observation=args.simplify_observation,
+        frame_stack=args.frame_stack,
         noise=noise,
     )
 
     # Initialize model
-    model_cfg = ModelConfig(side=args.side, observation_simplified=args.simplify_observation)
+    model_cfg = ModelConfig(
+        side=args.side, observation_simplified=args.simplify_observation, frame_stack=args.frame_stack
+    )
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)
     if args.init_model:
         model = PPO.load(args.init_model, env=envs, seed=args.seed, **ppo_kwargs)

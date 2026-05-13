@@ -67,6 +67,7 @@ PikachuVolleyballEnv (PettingZoo)
   → SimplifyAction (18 → 13 relative actions)
   → SimplifyObservation (mirror player_2 x-axis, optional)
   → NormalizeObservation ([0, 1])
+  → FrameStack (optional, leading time axis)
   → RewardShaping (optional)
   → ConvertSingleAgent (gym.Env for SB3)
 ```
@@ -99,7 +100,7 @@ uv run pytest            # Test
 ```toml
 [project]
 dependencies = [
-  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.5.0",
+  "pika-zoo @ git+https://github.com/alphachu-volleyball/pika-zoo@v1.6.0",
 ]
 ```
 

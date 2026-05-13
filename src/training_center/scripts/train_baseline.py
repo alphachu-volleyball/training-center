@@ -250,6 +250,9 @@ def main() -> None:
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
+    parser.add_argument(
+        "--frame-stack", type=int, default=1, help="Number of recent observations to stack (1=disabled)"
+    )
     parser.add_argument("--opponent", default="random", help="Opponent: random, builtin, stone, duckll, duckll:N")
     parser.add_argument("--eval-freq", type=int, default=0, help="ELO eval frequency in steps (0=disabled)")
     parser.add_argument(
@@ -289,6 +292,7 @@ def main() -> None:
             "noise_x_vel": args.noise_x_vel,
             "noise_y_vel": args.noise_y_vel,
             "simplify_observation": args.simplify_observation,
+            "frame_stack": args.frame_stack,
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
             "eval_opponents": args.eval_opponents,
@@ -324,6 +328,7 @@ def main() -> None:
         use_subproc=True,
         seed=c.seed,
         simplify_observation=c.simplify_observation,
+        frame_stack=c.frame_stack,
         noise=noise,
     )
 
@@ -338,6 +343,7 @@ def main() -> None:
         action_simplified=True,
         observation_simplified=c.simplify_observation,
         observation_normalized=True,
+        frame_stack=c.frame_stack,
     )
 
     mp_context = multiprocessing.get_context("forkserver")
