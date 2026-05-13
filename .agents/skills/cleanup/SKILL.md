@@ -7,8 +7,6 @@ description: Clean up local branches after a PR has been merged on GitHub
 
 Clean up local branches after a PR has been merged on the remote.
 
-Canonical source: `.agents/skills/cleanup/SKILL.md`.
-
 ## Steps
 
 1. Run `git fetch --prune` to sync remote state and remove stale tracking branches

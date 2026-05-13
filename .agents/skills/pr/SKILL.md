@@ -7,8 +7,6 @@ description: Create a pull request following the branch conventions (feat/fix ->
 
 Create a pull request for the current branch following the project's branch workflow.
 
-Canonical source: `.agents/skills/pr/SKILL.md`.
-
 ## Base Branch Rules
 
 - `feat/*` or `fix/*` -> target `main`

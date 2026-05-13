@@ -259,9 +259,9 @@ Logged every iteration (after `model.learn()`). Crossplay prefixes with `p1/` or
 | `dirty` | Uncommitted changes exist |
 | `pika_zoo_version` | Pinned pika-zoo version |
 
-## W&B MCP Server (Claude Code Integration)
+## W&B MCP Server (Agent Integration)
 
-Claude Code can query W&B experiment data directly via the [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server). Create `.mcp.json` in the project root:
+Agents can query W&B experiment data directly via the [wandb-mcp-server](https://github.com/wandb/wandb-mcp-server). Create `.mcp.json` in the project root:
 
 ```json
 {
@@ -285,14 +285,14 @@ Get your API key from https://wandb.ai/authorize.
 
 ## Experiment Tips: Cross-machine sync
 
-`experiments/` can be a symlink to a cloud-synced folder (Dropbox, Google Drive, etc.) for sharing experiment data across machines. See [CLAUDE.md](CLAUDE.md#experiments-directory) for setup.
+`experiments/` can be a symlink to a cloud-synced folder (Dropbox, Google Drive, etc.) for sharing experiment data across machines. See [AGENTS.md](AGENTS.md#experiments-directory) for setup.
 
 > [!NOTE]
 > `experiments/` is gitignored because it contains large model files, temporary outputs, and ad-hoc scripts that change frequently during experimentation.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the full development guide, including experiment conventions and lessons learned.
+See [AGENTS.md](AGENTS.md) for the full development guide, including experiment conventions and lessons learned.
 
 ### Branch Workflow
 
