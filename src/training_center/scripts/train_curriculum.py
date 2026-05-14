@@ -37,6 +37,7 @@ from training_center.model_config import ModelConfig, save_model
 from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
+    EvalBatch,
     EvalResult,
     build_eval_log_data,
     combine_per_side_results,
@@ -177,6 +178,9 @@ def _eval_matchup_worker(
         opponent_name=opp_name,
         model_side=model_side,
         opponent_side="player_2" if model_side == "player_1" else "player_1",
+        model_path=model_path,
+        opponent_spec=opp_name,
+        winning_score=winning_score,
         seed=seed,
     )
 
@@ -387,14 +391,14 @@ def main() -> None:
                         )
                         futures[f] = (side, opp)
 
-                results_per_side: dict[str, dict[str, dict]] = {s: {} for s in eval_sides}
+                results_per_side: dict[str, dict[str, EvalResult]] = {s: {} for s in eval_sides}
                 for f in as_completed(futures):
                     side, _ = futures[f]
                     opp_name, result = f.result()
                     results_per_side[side][opp_name] = result
 
                 if len(eval_sides) == 2:
-                    results = {
+                    results_by_opponent = {
                         opp: combine_per_side_results(
                             results_per_side["player_1"][opp],
                             results_per_side["player_2"][opp],
@@ -402,12 +406,18 @@ def main() -> None:
                         for opp in eval_opponents
                     }
                 else:
-                    results = results_per_side[eval_sides[0]]
+                    results_by_opponent = results_per_side[eval_sides[0]]
+
+                eval_batch = EvalBatch(
+                    [results_by_opponent[opp] for opp in eval_opponents],
+                    iteration=iteration,
+                    step=step,
+                )
 
                 # Pool stats: use combined per-opponent win rate (already
                 # spans both sides for universal models — see results above).
-                for opp_name in eval_opponents:
-                    pool.set_win_rate(opp_name, results[opp_name]["win_rate"])
+                for result in eval_batch.results:
+                    pool.set_win_rate(result.opponent_name, result.win_rate)
 
                 # Try unlock
                 newly_unlocked = pool.try_unlock()
@@ -421,18 +431,28 @@ def main() -> None:
                 if SELF_ENTRY in pool.unlocked:
                     log_data["curriculum/selfplay_pool_size"] = len(selfplay_pool)
 
-                log_data.update(build_eval_log_data(results, "eval"))
+                log_data.update(build_eval_log_data(eval_batch, "eval"))
                 if len(eval_sides) == 2:
-                    log_data.update(build_eval_log_data(results_per_side["player_1"], "eval/p1"))
-                    log_data.update(build_eval_log_data(results_per_side["player_2"], "eval/p2"))
+                    p1_batch = EvalBatch(
+                        list(results_per_side["player_1"].values()),
+                        iteration=iteration,
+                        step=step,
+                    )
+                    p2_batch = EvalBatch(
+                        list(results_per_side["player_2"].values()),
+                        iteration=iteration,
+                        step=step,
+                    )
+                    log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
+                    log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
 
                 run.log(log_data, step=step)
 
                 # Print
                 print(f"\n[Iter {iteration + 1}/{args.total_iterations}, step={step}]", flush=True)
                 print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
-                for r in results.values():
-                    print(r.format_score_frame_line(), flush=True)
+                for line in eval_batch.format_score_frame_lines():
+                    print(line, flush=True)
                 if newly_unlocked:
                     print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
 

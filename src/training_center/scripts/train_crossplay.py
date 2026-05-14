@@ -31,6 +31,7 @@ from training_center.metadata import get_experiment_metadata
 from training_center.model_config import ModelConfig, save_model
 from training_center.pool import OpponentPool, make_opponent_policy
 from training_center.scripts.utils import (
+    EvalBatch,
     EvalResult,
     build_eval_log_data,
     parse_noise,
@@ -102,6 +103,9 @@ def _run_matchup_worker(
         model_side=model_side,
         opponent_side="player_2" if model_side == "player_1" else "player_1",
         matchup_name=name,
+        model_path=p1_spec if model_side == "player_1" else p2_spec,
+        opponent_spec=p2_spec if model_side == "player_1" else p1_spec,
+        winning_score=winning_score,
         seed=seed,
     )
     return name, summary
@@ -162,7 +166,7 @@ def evaluate_crossplay_detailed(
     seed: int = 42,
     simplify_observation: bool = False,
     eval_opponents: list[str] | None = None,
-) -> dict[str, EvalResult]:
+) -> EvalBatch:
     """Evaluate p1/p2 models against each other and eval opponents."""
     rng = np.random.default_rng(seed)
     opponents = eval_opponents or ["random", "builtin"]
@@ -174,7 +178,7 @@ def evaluate_crossplay_detailed(
         matchup_defs.append((f"p1_vs_{opp}", p1_model_path, opp, "p1", "p1", opp))
         matchup_defs.append((f"p2_vs_{opp}", opp, p2_model_path, "p2", "p2", opp))
 
-    matchups: dict[str, EvalResult] = {}
+    results: list[EvalResult] = []
     for mname, p1s, p2s, perspective, model_name, opponent_name in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
@@ -189,8 +193,8 @@ def evaluate_crossplay_detailed(
             matchup_seed,
             simplify_observation,
         )
-        matchups[mname] = summary
-    return matchups
+        results.append(summary)
+    return EvalBatch(results)
 
 
 def _update_pool_stats(
@@ -549,7 +553,7 @@ def main() -> None:
                 _log_model_artifact(run, "p1-latest", str(p1_latest_dir))
                 _log_model_artifact(run, "p2-latest", str(p2_latest_dir))
                 eval_opps = [s.strip() for s in args.eval_opponents.split(",")]
-                matchups = evaluate_crossplay_detailed(
+                matchup_batch = evaluate_crossplay_detailed(
                     str(p1_latest_dir),
                     str(p2_latest_dir),
                     games=args.eval_games,
@@ -557,36 +561,37 @@ def main() -> None:
                     simplify_observation=args.simplify_observation,
                     eval_opponents=eval_opps,
                 )
+                matchups = matchup_batch.by_matchup()
 
                 print(f"\n[Iter {iteration + 1}/{args.total_iterations}, p1_step={step}]", flush=True)
 
                 log_data: dict = {"iteration": iteration}
-                for match, s in matchups.items():
-                    print(s.format_score_frame_line(indent="  ", include_vs=False), flush=True)
+                for line in matchup_batch.format_score_frame_lines(indent="  ", include_vs=False):
+                    print(line, flush=True)
 
                 # Build per-side eval results for log_data
-                p1_results = {}
-                p2_results = {}
-                for match, s in matchups.items():
+                p1_results: list[EvalResult] = []
+                p2_results: list[EvalResult] = []
+                for match, result in matchups.items():
                     if match.startswith("p1_vs_"):
-                        p1_results[match[len("p1_vs_") :]] = s
+                        p1_results.append(result)
                     if match.startswith("p2_vs_"):
-                        p2_results[match[len("p2_vs_") :]] = s
+                        p2_results.append(result)
                     if match == "p1_vs_p2":
-                        log_data["p2/eval/vs_p1/win_rate"] = 1.0 - s["win_rate"]
-                        log_data["p2/eval/vs_p1/avg_score"] = s["avg_opp_score"]
-                        log_data["p2/eval/vs_p1/avg_round_frames"] = s["avg_round_frames"]
-                log_data.update(build_eval_log_data(p1_results, "p1/eval"))
-                log_data.update(build_eval_log_data(p2_results, "p2/eval"))
+                        log_data["p2/eval/vs_p1/win_rate"] = 1.0 - result.win_rate
+                        log_data["p2/eval/vs_p1/avg_score"] = result.summary.metric("avg_opp_score")
+                        log_data["p2/eval/vs_p1/avg_round_frames"] = result.summary.metric("avg_round_frames")
+                log_data.update(build_eval_log_data(EvalBatch(p1_results), "p1/eval"))
+                log_data.update(build_eval_log_data(EvalBatch(p2_results), "p2/eval"))
 
                 # Compute ELO for p1 and p2
                 for side_label in ["p1", "p2"]:
                     model_name = f"__{side_label}__"
                     win_counts: dict[tuple[str, str], tuple[int, int]] = {}
-                    for match, s in matchups.items():
+                    for match, result in matchups.items():
                         if match.startswith(f"{side_label}_vs_") and match != "p1_vs_p2":
                             opp_name = match[len(f"{side_label}_vs_") :]
-                            win_counts[(model_name, opp_name)] = (s["wins"], s["losses"])
+                            win_counts[(model_name, opp_name)] = (result.wins, result.losses)
                     elos = compute_elo(win_counts)
                     log_data[f"{side_label}/eval/elo"] = elos.get(model_name, 1500.0)
 
@@ -621,8 +626,10 @@ def main() -> None:
                     log_data["p2/pfp/pool_size"] = p2_pfp["pool_size"]
 
                 # Adaptive curriculum update
-                p1_wr = matchups.get(f"p1_vs_{anchor_name}", {}).get("win_rate", 0)
-                p2_wr = matchups.get(f"p2_vs_{anchor_name}", {}).get("win_rate", 0)
+                p1_anchor_result = matchups.get(f"p1_vs_{anchor_name}")
+                p2_anchor_result = matchups.get(f"p2_vs_{anchor_name}")
+                p1_wr = p1_anchor_result.win_rate if p1_anchor_result else 0
+                p2_wr = p2_anchor_result.win_rate if p2_anchor_result else 0
                 if adaptive_config:
                     p1_anchor_winrate = p1_wr
                     p2_anchor_winrate = p2_wr

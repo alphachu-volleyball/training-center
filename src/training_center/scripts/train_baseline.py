@@ -25,6 +25,7 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
+    EvalBatch,
     EvalResult,
     build_eval_log_data,
     combine_per_side_results,
@@ -86,6 +87,9 @@ def _eval_matchup_worker(
         opponent_name=opp_name,
         model_side=model_side,
         opponent_side="player_2" if model_side == "player_1" else "player_1",
+        model_path=model_path,
+        opponent_spec=opp_name,
+        winning_score=winning_score,
         seed=seed,
     )
 
@@ -144,7 +148,7 @@ class EvalCallback(BaseCallback):
         so = self.model_config.observation_simplified
         rng = np.random.default_rng()
 
-        results_per_side: dict[str, dict[str, dict]] = {s: {} for s in eval_sides}
+        results_per_side: dict[str, dict[str, EvalResult]] = {s: {} for s in eval_sides}
         if self.executor is not None:
             futures = {}
             for side in eval_sides:
@@ -181,7 +185,7 @@ class EvalCallback(BaseCallback):
                     results_per_side[side][opp_name] = result
 
         if len(eval_sides) == 2:
-            results = {
+            results_by_opponent = {
                 opp: combine_per_side_results(
                     results_per_side["player_1"][opp],
                     results_per_side["player_2"][opp],
@@ -189,24 +193,30 @@ class EvalCallback(BaseCallback):
                 for opp in self.eval_opponents
             }
         else:
-            results = results_per_side[eval_sides[0]]
+            results_by_opponent = results_per_side[eval_sides[0]]
+
+        eval_batch = EvalBatch(
+            [results_by_opponent[opp] for opp in self.eval_opponents],
+            step=self.num_timesteps,
+        )
 
         # Compute ELO and log (combined wins for universal models)
         model_name = "__model__"
         win_counts: dict[tuple[str, str], tuple[int, int]] = {}
         log_data: dict = {}
 
-        for opp_name in self.eval_opponents:
-            r = results[opp_name]
-            win_counts[(model_name, opp_name)] = (r["wins"], r["losses"])
+        for result in eval_batch.results:
+            win_counts[(model_name, result.opponent_name)] = (result.wins, result.losses)
 
             if self.verbose:
-                print(r.format_score_frame_line())
+                print(result.format_score_frame_line())
 
-        log_data.update(build_eval_log_data(results, "eval"))
+        log_data.update(build_eval_log_data(eval_batch, "eval"))
         if len(eval_sides) == 2:
-            log_data.update(build_eval_log_data(results_per_side["player_1"], "eval/p1"))
-            log_data.update(build_eval_log_data(results_per_side["player_2"], "eval/p2"))
+            p1_batch = EvalBatch(list(results_per_side["player_1"].values()), step=self.num_timesteps)
+            p2_batch = EvalBatch(list(results_per_side["player_2"].values()), step=self.num_timesteps)
+            log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
+            log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
 
         elos = compute_elo(win_counts)
         elo = elos.get(model_name, 1500.0)
