@@ -1,7 +1,13 @@
 """Tests for CurriculumPool, including self-play entry handling."""
 
 from training_center.pool.curriculum import SELF_ENTRY, CurriculumPool
-from training_center.scripts.utils import EvalSummary, combine_per_side_results, model_won_per_game
+from training_center.scripts.utils import (
+    EvalBatch,
+    EvalResult,
+    EvalSummary,
+    combine_per_side_results,
+    model_won_per_game,
+)
 
 
 def test_initial_state():
@@ -158,6 +164,51 @@ def test_eval_summary_formats_score_frame_line():
     assert summary.format_score_frame_line("random") == (
         "    vs random: 3W 1L (4.5 ± 0.8 vs 2.0 ± 3.5, frames: 130 ± 500)"
     )
+
+
+def test_eval_result_carries_identity_and_formats_without_external_label():
+    summary = EvalSummary(
+        wins=2,
+        losses=0,
+        game_winners=["player_1", "player_1"],
+        p1_scores=[5, 5],
+        p2_scores=[1, 2],
+        game_frames=[100, 120],
+    )
+    result = EvalResult(
+        model_name="checkpoint_000010",
+        opponent_name="builtin",
+        model_side="player_1",
+        opponent_side="player_2",
+        summary=summary,
+        step=10_000,
+    )
+    assert result["opponent_name"] == "builtin"
+    assert result["wins"] == 2
+    assert result.to_record()["step"] == 10_000
+    assert result.format_score_frame_line() == "    vs builtin: 2W 0L (5.0 ± 0.0 vs 1.5 ± 0.2, frames: 110 ± 100)"
+
+
+def test_eval_batch_indexes_results():
+    first = EvalResult(
+        model_name="model",
+        opponent_name="random",
+        model_side="player_1",
+        opponent_side="player_2",
+        summary=EvalSummary(wins=1, losses=0, game_winners=["player_1"]),
+    )
+    second = EvalResult(
+        model_name="model",
+        opponent_name="builtin",
+        model_side="player_1",
+        opponent_side="player_2",
+        summary=EvalSummary(wins=0, losses=1, game_winners=["player_2"]),
+    )
+    batch = EvalBatch([first, second], iteration=3, step=100)
+    assert batch.by_opponent()["random"] is first
+    assert first.iteration == 3
+    assert second.step == 100
+    assert [record["opponent_name"] for record in batch.to_records()] == ["random", "builtin"]
 
 
 def test_model_won_per_game():

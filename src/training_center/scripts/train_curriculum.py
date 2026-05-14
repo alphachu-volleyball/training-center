@@ -37,7 +37,7 @@ from training_center.model_config import ModelConfig, save_model
 from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
-    EvalSummary,
+    EvalResult,
     build_eval_log_data,
     combine_per_side_results,
     parse_noise,
@@ -138,8 +138,8 @@ def _eval_matchup_worker(
     winning_score: int,
     simplify_observation: bool,
     seed: int,
-) -> tuple[str, EvalSummary]:
-    """Worker: evaluate model vs one opponent. Returns (opp_name, EvalSummary)."""
+) -> tuple[str, EvalResult]:
+    """Worker: evaluate model vs one opponent. Returns (opp_name, EvalResult)."""
     model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
     opp_player = make_player(
         opp_name,
@@ -171,7 +171,14 @@ def _eval_matchup_worker(
             )
         all_episodes.append(episode)
 
-    return opp_name, EvalSummary.from_episodes(all_episodes, model_side)
+    return opp_name, EvalResult.from_episodes(
+        all_episodes,
+        model_name=Path(model_path).parent.name,
+        opponent_name=opp_name,
+        model_side=model_side,
+        opponent_side="player_2" if model_side == "player_1" else "player_1",
+        seed=seed,
+    )
 
 
 def main() -> None:
@@ -424,8 +431,8 @@ def main() -> None:
                 # Print
                 print(f"\n[Iter {iteration + 1}/{args.total_iterations}, step={step}]", flush=True)
                 print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
-                for opp_name, r in results.items():
-                    print(r.format_score_frame_line(opp_name), flush=True)
+                for r in results.values():
+                    print(r.format_score_frame_line(), flush=True)
                 if newly_unlocked:
                     print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
 

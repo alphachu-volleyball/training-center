@@ -31,7 +31,7 @@ from training_center.metadata import get_experiment_metadata
 from training_center.model_config import ModelConfig, save_model
 from training_center.pool import OpponentPool, make_opponent_policy
 from training_center.scripts.utils import (
-    EvalSummary,
+    EvalResult,
     build_eval_log_data,
     parse_noise,
     record_video,
@@ -67,9 +67,11 @@ def _run_matchup_worker(
     games: int,
     winning_score: int,
     perspective: str,
+    model_name: str,
+    opponent_name: str,
     seed: int,
     simplify_observation: bool,
-) -> tuple[str, EvalSummary]:
+) -> tuple[str, EvalResult]:
     """Worker: run a matchup evaluation in a child process.
 
     Reconstructs Player objects from specs (model paths or AI names)
@@ -93,7 +95,15 @@ def _run_matchup_worker(
         all_stats.append(episode)
 
     model_side = "player_1" if perspective == "p1" else "player_2"
-    summary = EvalSummary.from_episodes(all_stats, model_side)
+    summary = EvalResult.from_episodes(
+        all_stats,
+        model_name=model_name,
+        opponent_name=opponent_name,
+        model_side=model_side,
+        opponent_side="player_2" if model_side == "player_1" else "player_1",
+        matchup_name=name,
+        seed=seed,
+    )
     return name, summary
 
 
@@ -152,20 +162,20 @@ def evaluate_crossplay_detailed(
     seed: int = 42,
     simplify_observation: bool = False,
     eval_opponents: list[str] | None = None,
-) -> dict[str, EvalSummary]:
+) -> dict[str, EvalResult]:
     """Evaluate p1/p2 models against each other and eval opponents."""
     rng = np.random.default_rng(seed)
     opponents = eval_opponents or ["random", "builtin"]
 
-    matchup_defs: list[tuple[str, str, str, str]] = [
-        ("p1_vs_p2", p1_model_path, p2_model_path, "p1"),
+    matchup_defs: list[tuple[str, str, str, str, str, str]] = [
+        ("p1_vs_p2", p1_model_path, p2_model_path, "p1", "p1", "p2"),
     ]
     for opp in opponents:
-        matchup_defs.append((f"p1_vs_{opp}", p1_model_path, opp, "p1"))
-        matchup_defs.append((f"p2_vs_{opp}", opp, p2_model_path, "p2"))
+        matchup_defs.append((f"p1_vs_{opp}", p1_model_path, opp, "p1", "p1", opp))
+        matchup_defs.append((f"p2_vs_{opp}", opp, p2_model_path, "p2", "p2", opp))
 
-    matchups: dict[str, EvalSummary] = {}
-    for mname, p1s, p2s, perspective in matchup_defs:
+    matchups: dict[str, EvalResult] = {}
+    for mname, p1s, p2s, perspective, model_name, opponent_name in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
             mname,
@@ -174,6 +184,8 @@ def evaluate_crossplay_detailed(
             games,
             winning_score,
             perspective,
+            model_name,
+            opponent_name,
             matchup_seed,
             simplify_observation,
         )
@@ -550,7 +562,7 @@ def main() -> None:
 
                 log_data: dict = {"iteration": iteration}
                 for match, s in matchups.items():
-                    print(s.format_score_frame_line(match, indent="  ", include_vs=False), flush=True)
+                    print(s.format_score_frame_line(indent="  ", include_vs=False), flush=True)
 
                 # Build per-side eval results for log_data
                 p1_results = {}

@@ -153,10 +153,19 @@ class EvalSummary:
         game_winners = list(result["game_winners"])
         wins = int(result.get("wins", 0))
         losses = int(result.get("losses", max(len(game_winners) - wins, 0)))
+        derived_keys = {
+            "win_rate",
+            "avg_p1_score",
+            "var_p1_score",
+            "avg_p2_score",
+            "var_p2_score",
+            "avg_game_frames",
+            "var_game_frames",
+        }
         metrics = {
             k: float(v)
             for k, v in result.items()
-            if k in EVAL_METRIC_KEYS and k not in {"win_rate"} and isinstance(v, int | float)
+            if k in EVAL_METRIC_KEYS and k not in derived_keys and isinstance(v, int | float)
         }
         return cls(
             wins=wins,
@@ -219,8 +228,159 @@ class EvalSummary:
         return key in self.to_log_dict()
 
 
+@dataclass
+class EvalResult:
+    """One model-vs-opponent evaluation record with identity and summary stats."""
+
+    model_name: str
+    opponent_name: str
+    model_side: str
+    opponent_side: str
+    summary: EvalSummary
+    matchup_name: str | None = None
+    iteration: int | None = None
+    step: int | None = None
+    seed: int | None = None
+
+    @classmethod
+    def from_episodes(
+        cls,
+        episodes: list[GameRecord],
+        *,
+        model_name: str,
+        opponent_name: str,
+        model_side: str,
+        opponent_side: str,
+        matchup_name: str | None = None,
+        iteration: int | None = None,
+        step: int | None = None,
+        seed: int | None = None,
+    ) -> EvalResult:
+        """Build an identified eval result from recorded games."""
+        return cls(
+            model_name=model_name,
+            opponent_name=opponent_name,
+            model_side=model_side,
+            opponent_side=opponent_side,
+            summary=EvalSummary.from_episodes(episodes, model_side),
+            matchup_name=matchup_name,
+            iteration=iteration,
+            step=step,
+            seed=seed,
+        )
+
+    @property
+    def games(self) -> int:
+        return self.summary.games
+
+    @property
+    def wins(self) -> int:
+        return self.summary.wins
+
+    @property
+    def losses(self) -> int:
+        return self.summary.losses
+
+    @property
+    def win_rate(self) -> float:
+        return self.summary.win_rate
+
+    @property
+    def label(self) -> str:
+        return self.matchup_name or self.opponent_name
+
+    def to_log_dict(self) -> dict[str, Any]:
+        """Return numeric summary fields for existing scalar logging."""
+        return self.summary.to_log_dict()
+
+    def to_record(self) -> dict[str, Any]:
+        """Return identity plus summary fields for tables, JSON, or artifacts."""
+        return {
+            "model_name": self.model_name,
+            "opponent_name": self.opponent_name,
+            "model_side": self.model_side,
+            "opponent_side": self.opponent_side,
+            "matchup_name": self.matchup_name,
+            "iteration": self.iteration,
+            "step": self.step,
+            "seed": self.seed,
+            **self.summary.to_log_dict(),
+        }
+
+    def format_score_frame_line(
+        self,
+        label: str | None = None,
+        *,
+        indent: str = "    ",
+        include_vs: bool = True,
+    ) -> str:
+        """Format wins, scores, and game length for console eval output."""
+        return self.summary.format_score_frame_line(label or self.label, indent=indent, include_vs=include_vs)
+
+    def __getitem__(self, key: str) -> Any:
+        if key in {
+            "model_name",
+            "opponent_name",
+            "model_side",
+            "opponent_side",
+            "matchup_name",
+            "iteration",
+            "step",
+            "seed",
+        }:
+            return getattr(self, key)
+        return self.summary[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_record()
+
+
+@dataclass
+class EvalBatch:
+    """A set of eval results produced at the same training/evaluation point."""
+
+    results: list[EvalResult]
+    iteration: int | None = None
+    step: int | None = None
+
+    def __post_init__(self) -> None:
+        for result in self.results:
+            if result.iteration is None:
+                result.iteration = self.iteration
+            if result.step is None:
+                result.step = self.step
+
+    def by_opponent(self) -> dict[str, EvalResult]:
+        """Return results keyed by opponent name."""
+        return {result.opponent_name: result for result in self.results}
+
+    def by_matchup(self) -> dict[str, EvalResult]:
+        """Return results keyed by matchup name when available, otherwise opponent name."""
+        return {result.label: result for result in self.results}
+
+    def to_records(self) -> list[dict[str, Any]]:
+        """Return table/JSON-friendly records."""
+        return [result.to_record() for result in self.results]
+
+    def format_score_frame_lines(self, *, indent: str = "    ", include_vs: bool = True) -> list[str]:
+        """Format all results for console output."""
+        return [result.format_score_frame_line(indent=indent, include_vs=include_vs) for result in self.results]
+
+
+def _summary_from_result(result: EvalResult | EvalSummary | dict[str, Any]) -> EvalSummary:
+    if isinstance(result, EvalResult):
+        return result.summary
+    return EvalSummary.from_mapping(result)
+
+
 def build_eval_log_data(
-    results: dict[str, EvalSummary | dict],
+    results: EvalBatch | dict[str, EvalResult | EvalSummary | dict],
     prefix: str,
 ) -> dict[str, float]:
     """Build a wandb log_data dict from eval results.
@@ -233,15 +393,19 @@ def build_eval_log_data(
         Flat dict like {"eval/vs_builtin/win_rate": 0.8, ...}
     """
     log_data: dict[str, float] = {}
-    for opp_name, r in results.items():
-        data = r.to_log_dict() if isinstance(r, EvalSummary) else r
+    result_items = results.by_opponent().items() if isinstance(results, EvalBatch) else results.items()
+    for opp_name, r in result_items:
+        data = r.to_log_dict() if isinstance(r, EvalResult | EvalSummary) else r
         for k in EVAL_METRIC_KEYS:
             if k in data:
                 log_data[f"{prefix}/vs_{opp_name}/{k}"] = data[k]
     return log_data
 
 
-def combine_per_side_results(p1_result: EvalSummary | dict, p2_result: EvalSummary | dict) -> EvalSummary:
+def combine_per_side_results(
+    p1_result: EvalResult | EvalSummary | dict,
+    p2_result: EvalResult | EvalSummary | dict,
+) -> EvalResult | EvalSummary:
     """Combine per-side eval results from a universal model into an aggregate.
 
     Win counts come from re-interpreting each side's game_winners (model wins
@@ -251,8 +415,8 @@ def combine_per_side_results(p1_result: EvalSummary | dict, p2_result: EvalSumma
     `_eval_matchup_worker` so it plugs into existing logging and pool-update
     paths unchanged.
     """
-    p1_summary = EvalSummary.from_mapping(p1_result)
-    p2_summary = EvalSummary.from_mapping(p2_result)
+    p1_summary = _summary_from_result(p1_result)
+    p2_summary = _summary_from_result(p2_result)
     p1_won = [w == "player_1" for w in p1_summary.game_winners]
     p2_won = [w == "player_2" for w in p2_summary.game_winners]
     won_list = p1_won + p2_won
@@ -278,7 +442,7 @@ def combine_per_side_results(p1_result: EvalSummary | dict, p2_result: EvalSumma
         if isinstance(v1, int | float) and isinstance(v2, int | float):
             metrics[k] = (v1 + v2) / 2
 
-    return EvalSummary(
+    summary = EvalSummary(
         wins=wins,
         losses=total - wins,
         game_winners=p1_summary.game_winners + p2_summary.game_winners,
@@ -288,10 +452,27 @@ def combine_per_side_results(p1_result: EvalSummary | dict, p2_result: EvalSumma
         metrics=metrics,
     )
 
+    if isinstance(p1_result, EvalResult) and isinstance(p2_result, EvalResult):
+        model_name = p1_result.model_name if p1_result.model_name == p2_result.model_name else "combined"
+        opponent_name = p1_result.opponent_name if p1_result.opponent_name == p2_result.opponent_name else "combined"
+        return EvalResult(
+            model_name=model_name,
+            opponent_name=opponent_name,
+            model_side="both",
+            opponent_side="both",
+            summary=summary,
+            matchup_name=p1_result.matchup_name or p2_result.matchup_name,
+            iteration=p1_result.iteration if p1_result.iteration == p2_result.iteration else None,
+            step=p1_result.step if p1_result.step == p2_result.step else None,
+            seed=None,
+        )
 
-def model_won_per_game(result: EvalSummary | dict, model_side: str) -> list[bool]:
+    return summary
+
+
+def model_won_per_game(result: EvalResult | EvalSummary | dict, model_side: str) -> list[bool]:
     """Convert an eval result's game_winners into a list of model-victory bools."""
-    summary = EvalSummary.from_mapping(result)
+    summary = _summary_from_result(result)
     return [w == model_side for w in summary.game_winners]
 
 

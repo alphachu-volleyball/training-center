@@ -25,7 +25,7 @@ from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
-    EvalSummary,
+    EvalResult,
     build_eval_log_data,
     combine_per_side_results,
     parse_noise,
@@ -44,10 +44,10 @@ def _eval_matchup_worker(
     winning_score: int,
     simplify_observation: bool,
     seed: int,
-) -> tuple[str, EvalSummary]:
+) -> tuple[str, EvalResult]:
     """Worker: evaluate model vs one opponent in a child process.
 
-    Returns (opp_name, EvalSummary) with per-game winners, scores, rounds, and metrics.
+    Returns (opp_name, EvalResult) with identity, per-game samples, and metrics.
     """
     model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
     opp_player = make_player(
@@ -80,7 +80,14 @@ def _eval_matchup_worker(
             )
         all_episodes.append(episode)
 
-    return opp_name, EvalSummary.from_episodes(all_episodes, model_side)
+    return opp_name, EvalResult.from_episodes(
+        all_episodes,
+        model_name=Path(model_path).parent.name,
+        opponent_name=opp_name,
+        model_side=model_side,
+        opponent_side="player_2" if model_side == "player_1" else "player_1",
+        seed=seed,
+    )
 
 
 class WandbMetricsCallback(BaseCallback):
@@ -194,7 +201,7 @@ class EvalCallback(BaseCallback):
             win_counts[(model_name, opp_name)] = (r["wins"], r["losses"])
 
             if self.verbose:
-                print(r.format_score_frame_line(opp_name))
+                print(r.format_score_frame_line())
 
         log_data.update(build_eval_log_data(results, "eval"))
         if len(eval_sides) == 2:
