@@ -27,18 +27,17 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
-from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
+    EvalSummary,
     build_eval_log_data,
     combine_per_side_results,
     parse_noise,
@@ -139,8 +138,8 @@ def _eval_matchup_worker(
     winning_score: int,
     simplify_observation: bool,
     seed: int,
-) -> tuple[str, dict]:
-    """Worker: evaluate model vs one opponent. Returns (opp_name, result_dict)."""
+) -> tuple[str, EvalSummary]:
+    """Worker: evaluate model vs one opponent. Returns (opp_name, EvalSummary)."""
     model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
     opp_player = make_player(
         opp_name,
@@ -172,43 +171,7 @@ def _eval_matchup_worker(
             )
         all_episodes.append(episode)
 
-    model_idx = 0 if model_side == "player_1" else 1
-    wins = sum(1 for e in all_episodes if e.winner == model_side)
-    p1_scores = [e.scores[0] for e in all_episodes]
-    p2_scores = [e.scores[1] for e in all_episodes]
-    game_frames = [e.num_frames for e in all_episodes]
-    model_scores = p1_scores if model_idx == 0 else p2_scores
-    opp_scores = p2_scores if model_idx == 0 else p1_scores
-    detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
-
-    return opp_name, {
-        "wins": wins,
-        "losses": games - wins,
-        "win_rate": wins / games,
-        "avg_score": float(np.mean(model_scores)),
-        "avg_opp_score": float(np.mean(opp_scores)),
-        "avg_p1_score": float(np.mean(p1_scores)),
-        "var_p1_score": float(np.var(p1_scores)),
-        "avg_p2_score": float(np.mean(p2_scores)),
-        "var_p2_score": float(np.var(p2_scores)),
-        "avg_game_frames": float(np.mean(game_frames)),
-        "var_game_frames": float(np.var(game_frames)),
-        "p1_scores": p1_scores,
-        "p2_scores": p2_scores,
-        "game_frames": game_frames,
-        "game_winners": [e.winner for e in all_episodes],
-        **detail,
-    }
-
-
-def _format_eval_line(opp_name: str, result: dict) -> str:
-    """Format one curriculum eval result for console output."""
-    return (
-        f"    vs {opp_name}: {result['wins']}W {result['losses']}L "
-        f"({result['avg_p1_score']:.1f} ± {result['var_p1_score']:.1f} "
-        f"vs {result['avg_p2_score']:.1f} ± {result['var_p2_score']:.1f}, "
-        f"frames: {result['avg_game_frames']:.0f} ± {result['var_game_frames']:.0f})"
-    )
+    return opp_name, EvalSummary.from_episodes(all_episodes, model_side)
 
 
 def main() -> None:
@@ -462,7 +425,7 @@ def main() -> None:
                 print(f"\n[Iter {iteration + 1}/{args.total_iterations}, step={step}]", flush=True)
                 print(f"  Pool ({status['pool_size']}): {pool.unlocked}", flush=True)
                 for opp_name, r in results.items():
-                    print(_format_eval_line(opp_name, r), flush=True)
+                    print(r.format_score_frame_line(opp_name), flush=True)
                 if newly_unlocked:
                     print(f"  >>> UNLOCKED: {newly_unlocked}!", flush=True)
 

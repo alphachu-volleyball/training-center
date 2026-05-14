@@ -6,8 +6,13 @@ import os
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
+from typing import Any
 
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
+from pika_zoo.records.types import GameRecord, GamesRecord
+
+from training_center.metrics import compute_eval_metrics
 
 NOISE_LEVELS: dict[int, tuple[int, int, int]] = {
     0: (0, 0, 0),
@@ -94,8 +99,128 @@ def _mean_var(values: list[int | float]) -> tuple[float, float]:
     return float(mean), float(variance)
 
 
+@dataclass
+class EvalSummary:
+    """Structured result from an evaluation batch.
+
+    Keeps per-game samples for recomputing aggregate stats, while exposing
+    dict-like reads for the older training code paths that still index by key.
+    """
+
+    wins: int
+    losses: int
+    game_winners: list[str]
+    p1_scores: list[int | float] = field(default_factory=list)
+    p2_scores: list[int | float] = field(default_factory=list)
+    game_frames: list[int | float] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_episodes(cls, episodes: list[GameRecord], model_side: str) -> EvalSummary:
+        """Build an eval summary from recorded games and the model's side."""
+        model_idx = 0 if model_side == "player_1" else 1
+        opp_idx = 1 - model_idx
+        p1_scores = [e.scores[0] for e in episodes]
+        p2_scores = [e.scores[1] for e in episodes]
+        game_frames = [e.num_frames for e in episodes]
+        wins = sum(1 for e in episodes if e.winner == model_side)
+
+        model_scores = p1_scores if model_idx == 0 else p2_scores
+        opp_scores = p1_scores if opp_idx == 0 else p2_scores
+        avg_score, _ = _mean_var(model_scores)
+        avg_opp_score, _ = _mean_var(opp_scores)
+
+        metrics = {
+            "avg_score": avg_score,
+            "avg_opp_score": avg_opp_score,
+            **compute_eval_metrics(GamesRecord(games=episodes), model_side),
+        }
+        return cls(
+            wins=wins,
+            losses=len(episodes) - wins,
+            game_winners=[e.winner for e in episodes],
+            p1_scores=p1_scores,
+            p2_scores=p2_scores,
+            game_frames=game_frames,
+            metrics=metrics,
+        )
+
+    @classmethod
+    def from_mapping(cls, result: EvalSummary | dict[str, Any]) -> EvalSummary:
+        """Coerce an existing result mapping into EvalSummary."""
+        if isinstance(result, EvalSummary):
+            return result
+        game_winners = list(result["game_winners"])
+        wins = int(result.get("wins", 0))
+        losses = int(result.get("losses", max(len(game_winners) - wins, 0)))
+        metrics = {
+            k: float(v)
+            for k, v in result.items()
+            if k in EVAL_METRIC_KEYS and k not in {"win_rate"} and isinstance(v, int | float)
+        }
+        return cls(
+            wins=wins,
+            losses=losses,
+            game_winners=game_winners,
+            p1_scores=list(result.get("p1_scores", [])),
+            p2_scores=list(result.get("p2_scores", [])),
+            game_frames=list(result.get("game_frames", [])),
+            metrics=metrics,
+        )
+
+    @property
+    def games(self) -> int:
+        return self.wins + self.losses
+
+    @property
+    def win_rate(self) -> float:
+        return self.wins / self.games if self.games else 0.0
+
+    def to_log_dict(self) -> dict[str, Any]:
+        """Return the legacy flat mapping used by W&B logging and ELO code."""
+        avg_p1_score, var_p1_score = _mean_var(self.p1_scores)
+        avg_p2_score, var_p2_score = _mean_var(self.p2_scores)
+        avg_game_frames, var_game_frames = _mean_var(self.game_frames)
+        return {
+            "wins": self.wins,
+            "losses": self.losses,
+            "win_rate": self.win_rate,
+            "avg_p1_score": avg_p1_score,
+            "var_p1_score": var_p1_score,
+            "avg_p2_score": avg_p2_score,
+            "var_p2_score": var_p2_score,
+            "avg_game_frames": avg_game_frames,
+            "var_game_frames": var_game_frames,
+            "p1_scores": self.p1_scores,
+            "p2_scores": self.p2_scores,
+            "game_frames": self.game_frames,
+            "game_winners": self.game_winners,
+            **self.metrics,
+        }
+
+    def format_score_frame_line(self, label: str, *, indent: str = "    ", include_vs: bool = True) -> str:
+        """Format wins, scores, and game length for console eval output."""
+        data = self.to_log_dict()
+        label_text = f"vs {label}" if include_vs else label
+        return (
+            f"{indent}{label_text}: {self.wins}W {self.losses}L "
+            f"({data['avg_p1_score']:.1f} ± {data['var_p1_score']:.1f} "
+            f"vs {data['avg_p2_score']:.1f} ± {data['var_p2_score']:.1f}, "
+            f"frames: {data['avg_game_frames']:.0f} ± {data['var_game_frames']:.0f})"
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self.to_log_dict()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_log_dict().get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_log_dict()
+
+
 def build_eval_log_data(
-    results: dict[str, dict],
+    results: dict[str, EvalSummary | dict],
     prefix: str,
 ) -> dict[str, float]:
     """Build a wandb log_data dict from eval results.
@@ -109,13 +234,14 @@ def build_eval_log_data(
     """
     log_data: dict[str, float] = {}
     for opp_name, r in results.items():
+        data = r.to_log_dict() if isinstance(r, EvalSummary) else r
         for k in EVAL_METRIC_KEYS:
-            if k in r:
-                log_data[f"{prefix}/vs_{opp_name}/{k}"] = r[k]
+            if k in data:
+                log_data[f"{prefix}/vs_{opp_name}/{k}"] = data[k]
     return log_data
 
 
-def combine_per_side_results(p1_result: dict, p2_result: dict) -> dict:
+def combine_per_side_results(p1_result: EvalSummary | dict, p2_result: EvalSummary | dict) -> EvalSummary:
     """Combine per-side eval results from a universal model into an aggregate.
 
     Win counts come from re-interpreting each side's game_winners (model wins
@@ -125,48 +251,48 @@ def combine_per_side_results(p1_result: dict, p2_result: dict) -> dict:
     `_eval_matchup_worker` so it plugs into existing logging and pool-update
     paths unchanged.
     """
-    p1_won = [w == "player_1" for w in p1_result["game_winners"]]
-    p2_won = [w == "player_2" for w in p2_result["game_winners"]]
+    p1_summary = EvalSummary.from_mapping(p1_result)
+    p2_summary = EvalSummary.from_mapping(p2_result)
+    p1_won = [w == "player_1" for w in p1_summary.game_winners]
+    p2_won = [w == "player_2" for w in p2_summary.game_winners]
     won_list = p1_won + p2_won
     total = len(won_list)
     wins = sum(won_list)
 
-    combined: dict = {
-        "wins": wins,
-        "losses": total - wins,
-        "win_rate": wins / total if total else 0.0,
-        # Concatenated for downstream callers that iterate game_winners; values
-        # alternate between "player_1"/<other> and "player_2"/<other> without a
-        # single shared "model_side", so prefer wins/losses/win_rate above.
-        "game_winners": list(p1_result["game_winners"]) + list(p2_result["game_winners"]),
-    }
-
-    for sample_key, avg_key, var_key in [
-        ("p1_scores", "avg_p1_score", "var_p1_score"),
-        ("p2_scores", "avg_p2_score", "var_p2_score"),
-        ("game_frames", "avg_game_frames", "var_game_frames"),
-    ]:
-        v1 = p1_result.get(sample_key)
-        v2 = p2_result.get(sample_key)
-        if isinstance(v1, list) and isinstance(v2, list):
-            samples = v1 + v2
-            combined[sample_key] = samples
-            combined[avg_key], combined[var_key] = _mean_var(samples)
-
+    metrics: dict[str, float] = {}
+    p1_data = p1_summary.to_log_dict()
+    p2_data = p2_summary.to_log_dict()
     for k in EVAL_METRIC_KEYS:
-        if k == "win_rate" or k in combined:
-            continue  # already set above from total wins
-        v1 = p1_result.get(k)
-        v2 = p2_result.get(k)
+        if k in {
+            "win_rate",
+            "avg_p1_score",
+            "var_p1_score",
+            "avg_p2_score",
+            "var_p2_score",
+            "avg_game_frames",
+            "var_game_frames",
+        }:
+            continue  # computed from counts or per-game samples
+        v1 = p1_data.get(k)
+        v2 = p2_data.get(k)
         if isinstance(v1, int | float) and isinstance(v2, int | float):
-            combined[k] = (v1 + v2) / 2
+            metrics[k] = (v1 + v2) / 2
 
-    return combined
+    return EvalSummary(
+        wins=wins,
+        losses=total - wins,
+        game_winners=p1_summary.game_winners + p2_summary.game_winners,
+        p1_scores=p1_summary.p1_scores + p2_summary.p1_scores,
+        p2_scores=p1_summary.p2_scores + p2_summary.p2_scores,
+        game_frames=p1_summary.game_frames + p2_summary.game_frames,
+        metrics=metrics,
+    )
 
 
-def model_won_per_game(result: dict, model_side: str) -> list[bool]:
+def model_won_per_game(result: EvalSummary | dict, model_side: str) -> list[bool]:
     """Convert an eval result's game_winners into a list of model-victory bools."""
-    return [w == model_side for w in result["game_winners"]]
+    summary = EvalSummary.from_mapping(result)
+    return [w == model_side for w in summary.game_winners]
 
 
 def record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:

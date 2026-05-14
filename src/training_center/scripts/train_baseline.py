@@ -16,7 +16,6 @@ from pathlib import Path
 import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
-from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -24,9 +23,9 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
+    EvalSummary,
     build_eval_log_data,
     combine_per_side_results,
     parse_noise,
@@ -45,10 +44,10 @@ def _eval_matchup_worker(
     winning_score: int,
     simplify_observation: bool,
     seed: int,
-) -> tuple[str, dict]:
+) -> tuple[str, EvalSummary]:
     """Worker: evaluate model vs one opponent in a child process.
 
-    Returns (opp_name, result_dict) with per-game winners, scores, rounds, and metrics.
+    Returns (opp_name, EvalSummary) with per-game winners, scores, rounds, and metrics.
     """
     model_player = make_player(model_path, agent=model_side, simplify_observation=simplify_observation)
     opp_player = make_player(
@@ -81,20 +80,7 @@ def _eval_matchup_worker(
             )
         all_episodes.append(episode)
 
-    # Compute metrics inside worker to avoid serializing frame data
-    model_idx = 0 if model_side == "player_1" else 1
-    wins = sum(1 for e in all_episodes if e.winner == model_side)
-    detail = compute_eval_metrics(GamesRecord(games=all_episodes), model_side)
-
-    result = {
-        "wins": wins,
-        "losses": games - wins,
-        "win_rate": wins / games,
-        "avg_score": float(np.mean([e.scores[model_idx] for e in all_episodes])),
-        "game_winners": [e.winner for e in all_episodes],
-        **detail,
-    }
-    return opp_name, result
+    return opp_name, EvalSummary.from_episodes(all_episodes, model_side)
 
 
 class WandbMetricsCallback(BaseCallback):
@@ -208,7 +194,7 @@ class EvalCallback(BaseCallback):
             win_counts[(model_name, opp_name)] = (r["wins"], r["losses"])
 
             if self.verbose:
-                print(f"  vs {opp_name}: {r['wins']}W {r['losses']}L")
+                print(r.format_score_frame_line(opp_name))
 
         log_data.update(build_eval_log_data(results, "eval"))
         if len(eval_sides) == 2:

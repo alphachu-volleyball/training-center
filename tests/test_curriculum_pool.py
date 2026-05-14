@@ -1,7 +1,7 @@
 """Tests for CurriculumPool, including self-play entry handling."""
 
 from training_center.pool.curriculum import SELF_ENTRY, CurriculumPool
-from training_center.scripts.utils import combine_per_side_results, model_won_per_game
+from training_center.scripts.utils import EvalSummary, combine_per_side_results, model_won_per_game
 
 
 def test_initial_state():
@@ -144,6 +144,20 @@ def test_combine_per_side_results_combines_score_and_frame_samples():
     assert abs(combined["var_p2_score"] - 2.75) < 1e-9
     assert abs(combined["avg_game_frames"] - 250.0) < 1e-9
     assert abs(combined["var_game_frames"] - 12500.0) < 1e-9
+
+
+def test_eval_summary_formats_score_frame_line():
+    summary = EvalSummary(
+        wins=3,
+        losses=1,
+        game_winners=["player_1", "player_1", "player_2", "player_1"],
+        p1_scores=[5, 5, 3, 5],
+        p2_scores=[1, 2, 5, 0],
+        game_frames=[100, 120, 140, 160],
+    )
+    assert summary.format_score_frame_line("random") == (
+        "    vs random: 3W 1L (4.5 ± 0.8 vs 2.0 ± 3.5, frames: 130 ± 500)"
+    )
 
 
 def test_model_won_per_game():

@@ -22,17 +22,16 @@ import numpy as np
 import wandb
 from pika_zoo.ai import BuiltinAI, DuckllAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
-from pika_zoo.records.types import GamesRecord
 from stable_baselines3 import PPO
 
 from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.metrics import compute_eval_metrics
 from training_center.model_config import ModelConfig, save_model
 from training_center.pool import OpponentPool, make_opponent_policy
 from training_center.scripts.utils import (
+    EvalSummary,
     build_eval_log_data,
     parse_noise,
     record_video,
@@ -70,7 +69,7 @@ def _run_matchup_worker(
     perspective: str,
     seed: int,
     simplify_observation: bool,
-) -> tuple[str, dict]:
+) -> tuple[str, EvalSummary]:
     """Worker: run a matchup evaluation in a child process.
 
     Reconstructs Player objects from specs (model paths or AI names)
@@ -79,9 +78,7 @@ def _run_matchup_worker(
     p1 = make_player(p1_spec, agent="player_1", simplify_observation=simplify_observation)
     p2 = make_player(p2_spec, agent="player_2", simplify_observation=simplify_observation)
     rng = np.random.default_rng(seed)
-    rounds_all = []
     all_stats = []
-    wins = 0
 
     for _ in range(games):
         game_seed = int(rng.integers(0, 2**31))
@@ -94,13 +91,9 @@ def _run_matchup_worker(
             simplify_observation=simplify_observation,
         )
         all_stats.append(episode)
-        if perspective == "p1":
-            wins += 1 if episode.winner == "player_1" else 0
-        else:
-            wins += 1 if episode.winner == "player_2" else 0
-        rounds_all.extend(episode.rounds)
 
-    summary = _summarize(wins, games, rounds_all, all_stats, perspective)
+    model_side = "player_1" if perspective == "p1" else "player_2"
+    summary = EvalSummary.from_episodes(all_stats, model_side)
     return name, summary
 
 
@@ -159,7 +152,7 @@ def evaluate_crossplay_detailed(
     seed: int = 42,
     simplify_observation: bool = False,
     eval_opponents: list[str] | None = None,
-) -> dict[str, dict]:
+) -> dict[str, EvalSummary]:
     """Evaluate p1/p2 models against each other and eval opponents."""
     rng = np.random.default_rng(seed)
     opponents = eval_opponents or ["random", "builtin"]
@@ -171,7 +164,7 @@ def evaluate_crossplay_detailed(
         matchup_defs.append((f"p1_vs_{opp}", p1_model_path, opp, "p1"))
         matchup_defs.append((f"p2_vs_{opp}", opp, p2_model_path, "p2"))
 
-    matchups: dict[str, dict] = {}
+    matchups: dict[str, EvalSummary] = {}
     for mname, p1s, p2s, perspective in matchup_defs:
         matchup_seed = int(rng.integers(0, 2**31))
         mname, summary = _run_matchup_worker(
@@ -186,35 +179,6 @@ def evaluate_crossplay_detailed(
         )
         matchups[mname] = summary
     return matchups
-
-
-def _summarize(
-    wins: int,
-    games: int,
-    rounds: list,
-    all_stats: list,
-    perspective: str,
-) -> dict:
-    """Aggregate statistics over multiple games."""
-    model_side = "player_1" if perspective == "p1" else "player_2"
-
-    if perspective == "p1":
-        avg_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
-    else:
-        avg_score = float(np.mean([e.scores[1] for e in all_stats])) if all_stats else 0
-        avg_opp_score = float(np.mean([e.scores[0] for e in all_stats])) if all_stats else 0
-
-    detail = compute_eval_metrics(GamesRecord(games=all_stats), model_side)
-
-    return {
-        "wins": wins,
-        "losses": games - wins,
-        "win_rate": wins / games,
-        "avg_score": avg_score,
-        "avg_opp_score": avg_opp_score,
-        **detail,
-    }
 
 
 def _update_pool_stats(
@@ -586,13 +550,7 @@ def main() -> None:
 
                 log_data: dict = {"iteration": iteration}
                 for match, s in matchups.items():
-                    print(
-                        f"  {match}: {s['wins']}W {s['losses']}L ({s['win_rate'] * 100:.0f}%)"
-                        f"  score: {s['avg_score']:.1f}-{s['avg_opp_score']:.1f}"
-                        f"  serve: {s['serve_win_rate'] * 100:.0f}% receive: {s['receive_win_rate'] * 100:.0f}%"
-                        f"  round: {s['avg_round_frames']:.0f}f",
-                        flush=True,
-                    )
+                    print(s.format_score_frame_line(match, indent="  ", include_vs=False), flush=True)
 
                 # Build per-side eval results for log_data
                 p1_results = {}
