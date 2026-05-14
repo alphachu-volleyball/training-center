@@ -66,6 +66,13 @@ def setup_graceful_shutdown() -> None:
 EVAL_METRIC_KEYS = [
     "win_rate",
     "avg_score",
+    "avg_opp_score",
+    "avg_p1_score",
+    "var_p1_score",
+    "avg_p2_score",
+    "var_p2_score",
+    "avg_game_frames",
+    "var_game_frames",
     "serve_win_rate",
     "receive_win_rate",
     "avg_round_frames",
@@ -76,6 +83,15 @@ EVAL_METRIC_KEYS = [
     "serve_avg_round_frames",
     "receive_avg_round_frames",
 ]
+
+
+def _mean_var(values: list[int | float]) -> tuple[float, float]:
+    """Return population mean and variance for a metric sample."""
+    if not values:
+        return 0.0, 0.0
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return float(mean), float(variance)
 
 
 def build_eval_log_data(
@@ -125,8 +141,20 @@ def combine_per_side_results(p1_result: dict, p2_result: dict) -> dict:
         "game_winners": list(p1_result["game_winners"]) + list(p2_result["game_winners"]),
     }
 
+    for sample_key, avg_key, var_key in [
+        ("p1_scores", "avg_p1_score", "var_p1_score"),
+        ("p2_scores", "avg_p2_score", "var_p2_score"),
+        ("game_frames", "avg_game_frames", "var_game_frames"),
+    ]:
+        v1 = p1_result.get(sample_key)
+        v2 = p2_result.get(sample_key)
+        if isinstance(v1, list) and isinstance(v2, list):
+            samples = v1 + v2
+            combined[sample_key] = samples
+            combined[avg_key], combined[var_key] = _mean_var(samples)
+
     for k in EVAL_METRIC_KEYS:
-        if k == "win_rate":
+        if k == "win_rate" or k in combined:
             continue  # already set above from total wins
         v1 = p1_result.get(k)
         v2 = p2_result.get(k)

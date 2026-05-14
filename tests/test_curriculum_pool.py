@@ -116,6 +116,36 @@ def test_combine_per_side_results_averages_metric_keys():
     assert abs(combined["power_hit_rate"] - 0.7) < 1e-9
 
 
+def test_combine_per_side_results_combines_score_and_frame_samples():
+    p1 = {
+        "wins": 1,
+        "losses": 1,
+        "win_rate": 0.5,
+        "game_winners": ["player_1", "player_2"],
+        "p1_scores": [5, 5],
+        "p2_scores": [1, 3],
+        "game_frames": [100, 200],
+    }
+    p2 = {
+        "wins": 1,
+        "losses": 1,
+        "win_rate": 0.5,
+        "game_winners": ["player_2", "player_1"],
+        "p1_scores": [2, 4],
+        "p2_scores": [5, 5],
+        "game_frames": [300, 400],
+    }
+    combined = combine_per_side_results(p1, p2)
+    assert combined["p1_scores"] == [5, 5, 2, 4]
+    assert combined["p2_scores"] == [1, 3, 5, 5]
+    assert abs(combined["avg_p1_score"] - 4.0) < 1e-9
+    assert abs(combined["var_p1_score"] - 1.5) < 1e-9
+    assert abs(combined["avg_p2_score"] - 3.5) < 1e-9
+    assert abs(combined["var_p2_score"] - 2.75) < 1e-9
+    assert abs(combined["avg_game_frames"] - 250.0) < 1e-9
+    assert abs(combined["var_game_frames"] - 12500.0) < 1e-9
+
+
 def test_model_won_per_game():
     result = {"game_winners": ["player_1", "player_2", "player_1", "player_2"]}
     assert model_won_per_game(result, "player_1") == [True, False, True, False]
