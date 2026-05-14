@@ -12,9 +12,7 @@ around 50% by definition.
 
 from __future__ import annotations
 
-from collections import deque
-
-from training_center.pool.common import PFP_WINDOW, PFPMixin
+from training_center.pool.common import PFPMixin
 
 SELF_ENTRY = "self"
 
@@ -24,21 +22,21 @@ class CurriculumPool(PFPMixin):
 
     Opponents are unlocked in order when the minimum win rate across
     all currently unlocked opponents (excluding "self") exceeds the
-    unlock threshold.
+    unlock threshold. Win rates come from ``set_win_rate`` (called per
+    evaluation batch).
     """
 
     def __init__(self, ladder: list[str], unlock_threshold: float = 0.7) -> None:
         self.ladder = ladder
         self.unlock_threshold = unlock_threshold
         self.unlocked: list[str] = []
-        self.win_stats: dict[str, deque] = {}
+        self.win_rates: dict[str, float] = {}
 
     def force_unlock(self, index: int) -> str:
         """Unlock the opponent at the given ladder index."""
         name = self.ladder[index]
         if name not in self.unlocked:
             self.unlocked.append(name)
-            self.win_stats[name] = deque(maxlen=PFP_WINDOW)
         return name
 
     def try_unlock(self) -> str | None:
@@ -56,9 +54,8 @@ class CurriculumPool(PFPMixin):
         for name in self.unlocked:
             if name == SELF_ENTRY:
                 continue
-            stats = self.win_stats.get(name)
-            if not stats:
-                return None
+            if name not in self.win_rates:
+                return None  # not yet evaluated this round
             if self.get_win_rate(name) < self.unlock_threshold:
                 return None
 
