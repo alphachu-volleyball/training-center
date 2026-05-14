@@ -276,16 +276,14 @@ def _update_pool_stats(
             )
             results[name] = wins
 
-    # Apply results to pool (main process only)
+    # Apply results to pool (main process only) — use combined per-checkpoint wr
     win_rates = []
     for path in checkpoints:
         name = Path(path).name
         wins_list = results[name]
-        for won in wins_list:
-            pool.update_stats(name, won)
-
         n_wins = sum(wins_list)
-        wr = pool.get_win_rate(name)
+        wr = n_wins / games if games else 0.5
+        pool.set_win_rate(name, wr)
         win_rates.append(wr)
         weight = 1.0 - wr + 0.1
         print(f"    {name}: {n_wins}W {games - n_wins}L (wr={wr:.2f}, weight={weight:.2f})", flush=True)

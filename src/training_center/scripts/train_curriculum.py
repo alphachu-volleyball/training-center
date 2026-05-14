@@ -41,7 +41,6 @@ from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
     build_eval_log_data,
     combine_per_side_results,
-    model_won_per_game,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -410,13 +409,10 @@ def main() -> None:
                 else:
                     results = results_per_side[eval_sides[0]]
 
-                # Pool stats: count per-game model wins from each side's eval
-                # so universal models need to win on BOTH sides to unlock.
+                # Pool stats: use combined per-opponent win rate (already
+                # spans both sides for universal models — see results above).
                 for opp_name in eval_opponents:
-                    for side in eval_sides:
-                        side_result = results_per_side[side][opp_name]
-                        for won in model_won_per_game(side_result, side):
-                            pool.update_stats(opp_name, won)
+                    pool.set_win_rate(opp_name, results[opp_name]["win_rate"])
 
                 # Try unlock
                 newly_unlocked = pool.try_unlock()

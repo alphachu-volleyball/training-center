@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import os
 import random
-from collections import deque
 from collections.abc import Callable
 
 import numpy as np
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 
-from training_center.pool.common import PFP_WINDOW, PFPMixin
+from training_center.pool.common import PFPMixin
 
 
 def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
@@ -25,7 +24,7 @@ def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
 
 
 class OpponentPool(PFPMixin):
-    """PFP opponent pool with sliding-window win-rate tracking.
+    """PFP opponent pool with per-batch win-rate tracking.
 
     Opponent selection:
     - anchor_prob: probability of choosing the anchor AI (e.g., builtin, duckll)
@@ -38,15 +37,13 @@ class OpponentPool(PFPMixin):
         self.anchor = anchor
         self.anchor_name = type(anchor).__name__ if anchor else "none"
         self.checkpoints: list[str] = []
-        self.win_stats: dict[str, deque] = {}
+        self.win_rates: dict[str, float] = {}
         os.makedirs(pool_dir, exist_ok=True)
 
     def add_checkpoint(self, model: PPO, iteration: int) -> str:
         path = os.path.join(self.pool_dir, f"{self.side}_iter{iteration:06d}")
         model.save(path)
-        name = os.path.basename(path)
         self.checkpoints.append(path)
-        self.win_stats[name] = deque(maxlen=PFP_WINDOW)
         return path
 
     def sample_opponent(
