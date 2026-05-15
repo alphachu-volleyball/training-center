@@ -747,10 +747,7 @@ def _default_visible_sides(data: list[dict[str, Any]]) -> dict[str, set[str]]:
     sides_by_opponent: dict[str, set[str]] = {}
     for row in data:
         sides_by_opponent.setdefault(str(row["opponent"]), set()).add(str(row["eval_side"]))
-    return {
-        opponent: {"combined"} if "combined" in sides else sides
-        for opponent, sides in sides_by_opponent.items()
-    }
+    return {opponent: {"combined"} if "combined" in sides else sides for opponent, sides in sides_by_opponent.items()}
 
 
 def _eval_trace_visibility(

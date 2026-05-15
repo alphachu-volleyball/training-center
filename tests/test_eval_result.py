@@ -120,9 +120,7 @@ def test_eval_summary_formats_score_frame_line():
         p2_scores=[1, 2, 5, 0],
         game_frames=[100, 120, 140, 160],
     )
-    assert summary.format_score_frame_line("random") == (
-        "    vs random: 3W 1L (4.5±0.9 vs 2.0±1.9, frames: 130±22)"
-    )
+    assert summary.format_score_frame_line("random") == ("    vs random: 3W 1L (4.5±0.9 vs 2.0±1.9, frames: 130±22)")
 
 
 def test_eval_result_carries_identity_and_formats_without_external_label():
@@ -518,9 +516,9 @@ def test_eval_dashboard_does_not_duplicate_combined_when_combined_batch_exists()
         }
     )
 
-    assert [
-        row for row in table.data if row[2] == "builtin" and row[3] == "combined" and row[4] == "win_rate"
-    ] == [[100, 0, "builtin", "combined", "win_rate", 0.5, None, 0.09452865480086614, 0.9054713451991339, 2, 1, 1]]
+    assert [row for row in table.data if row[2] == "builtin" and row[3] == "combined" and row[4] == "win_rate"] == [
+        [100, 0, "builtin", "combined", "win_rate", 0.5, None, 0.09452865480086614, 0.9054713451991339, 2, 1, 1]
+    ]
 
 
 def test_eval_dashboard_includes_combined_for_single_side_models():
