@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
+import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -19,7 +20,6 @@ from pika_zoo.ai import BuiltinAI, DuckllAI, RandomAI, StoneAI
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
-from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -27,8 +27,12 @@ from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
-    build_eval_log_data,
+    build_eval_chart_log_data,
+    build_train_chart_log_data,
+    build_video_log_data,
     combine_per_side_results,
+    extend_eval_chart_history,
+    extend_train_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -97,11 +101,24 @@ def _eval_matchup_worker(
 class WandbMetricsCallback(BaseCallback):
     """Forward SB3 training metrics to wandb."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.train_chart_history: list[dict] = []
+        self.last_logged_update: int | None = None
+
     def _on_step(self) -> bool:
         if self.logger is not None and hasattr(self.logger, "name_to_value"):
             metrics = {k: v for k, v in self.logger.name_to_value.items()}
             if metrics:
-                wandb.run.log(metrics, step=self.num_timesteps)
+                n_updates = metrics.get("train/n_updates")
+                if isinstance(n_updates, int | float):
+                    if int(n_updates) == self.last_logged_update:
+                        return True
+                    self.last_logged_update = int(n_updates)
+                history_len = len(self.train_chart_history)
+                extend_train_chart_history(self.train_chart_history, metrics, step=self.num_timesteps)
+                if len(self.train_chart_history) > history_len:
+                    wandb.run.log(build_train_chart_log_data(self.train_chart_history), step=self.num_timesteps)
         return True
 
 
@@ -111,7 +128,7 @@ class EvalCallback(BaseCallback):
     def __init__(
         self,
         eval_freq: int,
-        save_path: Path,
+        checkpoint_root: Path,
         model_config: ModelConfig,
         eval_games: int = 20,
         eval_opponents: list[str] | None = None,
@@ -120,16 +137,17 @@ class EvalCallback(BaseCallback):
     ) -> None:
         super().__init__(verbose)
         self.eval_freq = eval_freq
-        self.save_path = save_path
+        self.checkpoint_root = checkpoint_root
         self.model_config = model_config
         self.eval_games = eval_games
         self.eval_opponents = eval_opponents or ["random", "builtin"]
         self.executor = executor
+        self.eval_chart_history: dict[str, list[EvalResult]] = {}
 
     def run_eval(self) -> None:
         """Run evaluation and log results. Called from _on_step and after training ends."""
         # Save checkpoint
-        ckpt_dir = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+        ckpt_dir = self.checkpoint_root / f"checkpoint_{self.num_timesteps}"
         save_model(self.model, ckpt_dir, self.model_config)
         model_path = str(ckpt_dir / "model.zip")
 
@@ -200,31 +218,28 @@ class EvalCallback(BaseCallback):
             step=self.num_timesteps,
         )
 
-        # Compute ELO and log (combined wins for universal models)
-        model_name = "__model__"
-        win_counts: dict[tuple[str, str], tuple[int, int]] = {}
         log_data: dict = {}
 
         for result in eval_batch.results:
-            win_counts[(model_name, result.opponent_name)] = (result.wins, result.losses)
-
             if self.verbose:
                 print(result.format_score_frame_line())
 
-        log_data.update(build_eval_log_data(eval_batch, "eval"))
+        eval_chart_batches = {"combined": eval_batch}
         if len(eval_sides) == 2:
             p1_batch = EvalBatch(list(results_per_side["player_1"].values()), step=self.num_timesteps)
             p2_batch = EvalBatch(list(results_per_side["player_2"].values()), step=self.num_timesteps)
-            log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
-            log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
+            eval_chart_batches["p1"] = p1_batch
+            eval_chart_batches["p2"] = p2_batch
+        log_data.update(
+            build_eval_chart_log_data(
+                extend_eval_chart_history(self.eval_chart_history, eval_chart_batches),
+            )
+        )
 
-        elos = compute_elo(win_counts)
-        elo = elos.get(model_name, 1500.0)
-        log_data["eval/elo"] = elo
         wandb.run.log(log_data, step=self.num_timesteps)
 
         if self.verbose:
-            print(f"\n[Eval @ {self.num_timesteps} steps] ELO: {elo:.0f}")
+            print(f"\n[Eval @ {self.num_timesteps} steps]")
 
     def _on_step(self) -> bool:
         if self.n_calls > 0 and self.n_calls % self.eval_freq == 0:
@@ -357,12 +372,14 @@ def main() -> None:
     )
 
     eval_cb = None
+    eval_checkpoint_tmp = None
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
+        eval_checkpoint_tmp = tempfile.TemporaryDirectory(prefix="training-center-baseline-eval-")
         eval_cb = EvalCallback(
             eval_freq=c.eval_freq // c.num_envs,
-            save_path=save_path,
+            checkpoint_root=Path(eval_checkpoint_tmp.name),
             model_config=model_cfg,
             eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
             executor=eval_executor,
@@ -390,18 +407,29 @@ def main() -> None:
         # video per side so the universal claim is visible in artifacts.
         video_sides = ["player_1", "player_2"] if c.side == "both" else [c.side]
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
+        video_samples = []
         for opp in eval_opps:
             for video_side in video_sides:
                 tag = "p1" if video_side == "player_1" else "p2"
                 suffix = f"_as_{tag}" if c.side == "both" else ""
                 video_path = str(save_path.parent / f"vs_{opp}{suffix}.mp4")
                 record_video(model_zip, video_side, opp, video_path)
-                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
+                video_samples.append(
+                    {
+                        "opponent": opp,
+                        "model_side": tag,
+                        "video": wandb.Video(video_path, fps=25, format="mp4"),
+                    }
+                )
+        if video_samples:
+            run.log(build_video_log_data(video_samples))
     finally:
         if eval_executor is not None:
             shutdown_executor(eval_executor)
         env.close()
         run.finish()
+        if eval_checkpoint_tmp is not None:
+            eval_checkpoint_tmp.cleanup()
 
 
 if __name__ == "__main__":

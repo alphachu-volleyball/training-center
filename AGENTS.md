@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-RL training pipeline for alphachu-volleyball — cross-play, evaluation, and model export.
+RL training pipeline for alphachu-volleyball — curriculum training, evaluation, and model export.
 
 ### Goals
 
-- Train Pikachu Volleyball AI agents using SB3 PPO with cross-play / PFP
+- Train Pikachu Volleyball AI agents using SB3 PPO with curriculum learning / PFP
 - Evaluate agents with ELO rating and win-rate metrics
 - Export trained models as ONNX for web deployment (champions)
 
@@ -38,12 +38,10 @@ src/training_center/
 ├── model_config.py             # Model wrapper config (save/load alongside model.zip)
 ├── pool/
 │   ├── common.py               # PFPMixin: shared win-rate tracking + PFP sampling
-│   ├── opponent.py             # OpponentPool: model checkpoint pool for cross-play
 │   └── curriculum.py           # CurriculumPool: unlock-gated AI ladder
 └── scripts/
     ├── utils.py                # Shared utilities (noise, signals, video, eval logging)
     ├── train_baseline.py       # Baseline PPO training, fixed opponent (SubprocVecEnv)
-    ├── train_crossplay.py      # Cross-play with PFP + curriculum (DummyVecEnv)
     ├── train_curriculum.py     # Curriculum training, progressive difficulty (DummyVecEnv)
     └── evaluate_roundrobin.py  # Round-robin ELO evaluation (p1 pool × p2 pool)
 ```
@@ -52,7 +50,6 @@ src/training_center/
 
 ```bash
 uv run train-baseline         # Baseline PPO training (fixed opponent)
-uv run train-crossplay        # Cross-play training (PFP + curriculum)
 uv run train-curriculum       # Curriculum training (progressive difficulty)
 uv run evaluate-roundrobin    # Round-robin ELO evaluation
 uv run compute-elo            # Compute ELO from CSV/JSON matchup files
@@ -72,12 +69,12 @@ PikachuVolleyballEnv (PettingZoo)
   → ConvertSingleAgent (gym.Env for SB3)
 ```
 
-`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for cross-play.
+`env_factory.make_env()` builds this chain. `set_opponent_policy()` swaps opponents in-place for curriculum training.
 
 ### VecEnv Strategy
 
-- **train_ppo**: `SubprocVecEnv` — fixed opponent, maximize CPU parallelism
-- **train_crossplay**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
+- **train_baseline**: `SubprocVecEnv` — fixed opponent, maximize CPU parallelism
+- **train_curriculum**: `DummyVecEnv` — opponent policy must be swapped in-process each iteration
 
 ## Development Environment
 
@@ -176,7 +173,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 
 | Category | Use |
 |----------|-----|
-| `training` | Model training — baseline, crossplay, sweeps |
+| `training` | Model training — baseline, curriculum, sweeps |
 | `evaluation` | Model-vs-model assessment, ELO measurement |
 | `analysis` | Metric validation, environment/opponent study, reproducibility |
 | `report` | W&B Report summarizing multiple experiments |

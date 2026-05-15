@@ -125,7 +125,7 @@ def make_vec_env(
             training a side-agnostic (universal) model with
             simplify_observation.
         opponent_policy: Opponent policy (AIPolicy, callable, or None for random).
-        use_subproc: True for SubprocVecEnv (train_ppo), False for DummyVecEnv (cross-play).
+        use_subproc: True for SubprocVecEnv, False for DummyVecEnv when opponents are swapped in-process.
         seed: Base seed (each env gets seed + rank).
         **env_kwargs: Forwarded to make_env.
     """

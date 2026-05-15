@@ -18,6 +18,7 @@ import argparse
 import multiprocessing
 import os
 import random
+import tempfile
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -39,8 +40,13 @@ from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
-    build_eval_log_data,
+    build_eval_chart_log_data,
+    build_train_chart_log_data,
+    build_video_log_data,
     combine_per_side_results,
+    extend_curriculum_chart_history,
+    extend_eval_chart_history,
+    extend_train_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -334,6 +340,11 @@ def main() -> None:
     # ~args.eval_games games per opponent (not 2x).
     eval_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
     per_side_eval_games = args.eval_games // len(eval_sides)
+    eval_chart_history: dict[str, list[EvalResult]] = {}
+    train_chart_history: list[dict] = []
+    curriculum_chart_history: list[dict] = []
+    eval_checkpoint_tmp = tempfile.TemporaryDirectory(prefix="training-center-curriculum-eval-")
+    eval_checkpoint_root = Path(eval_checkpoint_tmp.name)
 
     try:
         for iteration in range(args.total_iterations):
@@ -348,19 +359,27 @@ def main() -> None:
             if model.logger is not None and hasattr(model.logger, "name_to_value"):
                 metrics = {k: v for k, v in model.logger.name_to_value.items()}
                 if metrics:
-                    run.log(metrics, step=model.num_timesteps)
+                    history_len = len(train_chart_history)
+                    extend_train_chart_history(train_chart_history, metrics, step=model.num_timesteps)
+                    if len(train_chart_history) > history_len:
+                        run.log(
+                            build_train_chart_log_data(
+                                train_chart_history,
+                                curriculum_history=curriculum_chart_history,
+                            ),
+                            step=model.num_timesteps,
+                        )
 
-            # Save periodic checkpoints
-            if iteration % args.save_interval == 0:
-                iter_dir = save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
-                if SELF_ENTRY in pool.unlocked:
-                    selfplay_pool.append(str(iter_dir / "model.zip"))
+            # Save periodic self-play snapshots only when self-play is active.
+            if SELF_ENTRY in pool.unlocked and iteration % args.save_interval == 0:
+                iter_dir = save_model(model, save_dir / "selfplay" / f"iter_{iteration:06d}", model_cfg)
+                selfplay_pool.append(str(iter_dir / "model.zip"))
 
             # --- EVALUATE ---
             is_last = iteration == args.total_iterations - 1
             if (iteration + 1) % args.eval_freq == 0 or is_last:
                 step = model.num_timesteps
-                ckpt_dir = save_model(model, save_dir / f"checkpoint_{iteration:06d}", model_cfg)
+                ckpt_dir = save_model(model, eval_checkpoint_root / f"checkpoint_{iteration:06d}", model_cfg)
                 model_path = str(ckpt_dir / "model.zip")
 
                 artifact = wandb.Artifact(f"curriculum-checkpoint-{iteration:06d}", type="model")
@@ -423,15 +442,23 @@ def main() -> None:
                 newly_unlocked = pool.try_unlock()
 
                 # Log
-                log_data: dict = {"iteration": iteration}
+                log_data: dict = {}
                 status = pool.status()
-                log_data["curriculum/pool_size"] = status["pool_size"]
-                log_data["curriculum/min_win_rate"] = status["min_win_rate"]
-                log_data["curriculum/avg_win_rate"] = status["avg_win_rate"]
-                if SELF_ENTRY in pool.unlocked:
-                    log_data["curriculum/selfplay_pool_size"] = len(selfplay_pool)
+                extend_curriculum_chart_history(
+                    curriculum_chart_history,
+                    status,
+                    iteration=iteration,
+                    step=step,
+                    selfplay_pool_size=len(selfplay_pool) if SELF_ENTRY in pool.unlocked else None,
+                )
+                log_data.update(
+                    build_train_chart_log_data(
+                        train_chart_history,
+                        curriculum_history=curriculum_chart_history,
+                    )
+                )
 
-                log_data.update(build_eval_log_data(eval_batch, "eval"))
+                eval_chart_batches = {"combined": eval_batch}
                 if len(eval_sides) == 2:
                     p1_batch = EvalBatch(
                         list(results_per_side["player_1"].values()),
@@ -443,8 +470,14 @@ def main() -> None:
                         iteration=iteration,
                         step=step,
                     )
-                    log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
-                    log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
+                    eval_chart_batches["p1"] = p1_batch
+                    eval_chart_batches["p2"] = p2_batch
+                log_data.update(
+                    build_eval_chart_log_data(
+                        extend_eval_chart_history(eval_chart_history, eval_chart_batches),
+                        unlock_threshold=args.unlock_threshold,
+                    )
+                )
 
                 run.log(log_data, step=step)
 
@@ -467,6 +500,7 @@ def main() -> None:
         # opponent spec, not meaningful as a final demo). For universal models,
         # record one video per side.
         video_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
+        video_samples = []
         for opp in pool.unlocked:
             if opp == SELF_ENTRY:
                 continue
@@ -475,7 +509,15 @@ def main() -> None:
                 suffix = f"_as_{tag}" if args.side == "both" else ""
                 video_path = str(save_dir / f"vs_{opp}{suffix}.mp4")
                 record_video(final_zip, video_side, opp, video_path)
-                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
+                video_samples.append(
+                    {
+                        "opponent": opp,
+                        "model_side": tag,
+                        "video": wandb.Video(video_path, fps=25, format="mp4"),
+                    }
+                )
+        if video_samples:
+            run.log(build_video_log_data(video_samples))
 
         print(f"\nTraining complete. Final pool: {pool.unlocked}")
         print(f"Model saved to {final_dir}")
@@ -483,6 +525,7 @@ def main() -> None:
         shutdown_executor(eval_executor)
         envs.close()
         run.finish()
+        eval_checkpoint_tmp.cleanup()
 
 
 if __name__ == "__main__":
