@@ -450,6 +450,7 @@ def main() -> None:
                 log_data.update(
                     build_eval_chart_log_data(
                         extend_eval_chart_history(eval_chart_history, eval_chart_batches),
+                        unlock_threshold=args.unlock_threshold,
                     )
                 )
 

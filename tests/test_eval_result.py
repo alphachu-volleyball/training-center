@@ -307,7 +307,33 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
         "Opponent score",
         "Round frames",
     ]
+    assert dashboard["layout"]["paper_bgcolor"] == "rgba(255, 255, 255, 0)"
+    assert dashboard["layout"]["plot_bgcolor"] == "rgba(255, 255, 255, 0)"
+    assert "0.75 threshold" not in [trace.get("name") for trace in dashboard["data"]]
     assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
+
+
+def test_eval_dashboard_uses_dynamic_unlock_threshold():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=1,
+                losses=1,
+                winners=["player_1", "player_2"],
+                p1_scores=[5, 3],
+                p2_scores=[1, 5],
+                game_frames=[100, 120],
+            )
+        ],
+        iteration=7,
+        step=1234,
+    )
+
+    dashboard = build_eval_chart_log_data({"p1": batch}, unlock_threshold=0.8)["eval/dashboard"].to_plotly_json()
+    threshold_trace = next(trace for trace in dashboard["data"] if trace.get("name") == "unlock threshold (0.80)")
+
+    assert threshold_trace["y"] == [0.8, 0.8]
 
 
 def test_eval_dashboard_defaults_to_combined_when_available():

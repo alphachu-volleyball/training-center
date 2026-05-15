@@ -619,7 +619,12 @@ def _eval_trace_visibility(
     return "legendonly"
 
 
-def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figure:
+def _plotly_eval_dashboard(
+    rows: list[list[Any]],
+    columns: list[str],
+    *,
+    unlock_threshold: float | None = None,
+) -> go.Figure:
     """Build one dropdown-driven dashboard with core eval curves together."""
     data = _rows_to_dicts(rows, columns)
     opponents = sorted({str(row["opponent"]) for row in data})
@@ -760,14 +765,14 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
                 )
 
         steps = sorted({row["step"] for row in data if row["opponent"] == opponent and row["metric"] == "win_rate"})
-        if steps:
+        if steps and unlock_threshold is not None:
             fig.add_trace(
                 go.Scatter(
                     x=[min(steps), max(steps)],
-                    y=[0.75, 0.75],
+                    y=[unlock_threshold, unlock_threshold],
                     mode="lines",
                     line={"color": "#777", "dash": "dash"},
-                    name="0.75 threshold",
+                    name=f"unlock threshold ({unlock_threshold:.2f})",
                     showlegend=True,
                     hoverinfo="skip",
                     visible=_eval_trace_visibility(opponent, None, default_opponent, visible_sides_by_opponent),
@@ -794,9 +799,12 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
         for opponent in opponents
     ]
     fig.update_layout(
+        template="plotly_white",
         title=f"Eval vs {default_opponent}" if default_opponent else "Eval",
         height=900,
         hovermode="x unified",
+        paper_bgcolor="rgba(255, 255, 255, 0)",
+        plot_bgcolor="rgba(255, 255, 255, 0)",
         legend={
             "orientation": "h",
             "yanchor": "bottom",
@@ -818,10 +826,12 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
             }
         ],
     )
-    fig.update_yaxes(title_text="Win rate", range=[0, 1], row=1, col=1)
-    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=2, col=1)
-    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=3, col=1)
-    fig.update_yaxes(title_text="Frames", row=4, col=1)
+    grid_style = {"showgrid": True, "gridcolor": "rgba(31, 45, 61, 0.14)", "zerolinecolor": "rgba(31, 45, 61, 0.18)"}
+    fig.update_yaxes(title_text="Win rate", range=[0, 1], row=1, col=1, **grid_style)
+    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=2, col=1, **grid_style)
+    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=3, col=1, **grid_style)
+    fig.update_yaxes(title_text="Frames", row=4, col=1, **grid_style)
+    fig.update_xaxes(**grid_style)
     fig.update_xaxes(title_text="Step", row=4, col=1)
     return fig
 
@@ -830,6 +840,7 @@ def build_eval_chart_log_data(
     batches: dict[str, EvalBatch],
     *,
     prefix: str = "eval",
+    unlock_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Build W&B chart data from a single source of eval table rows.
 
@@ -839,7 +850,11 @@ def build_eval_chart_log_data(
     table = build_eval_chart_table(batches)
     log_data: dict[str, Any] = {
         f"{prefix}/table": table,
-        f"{prefix}/dashboard": _plotly_eval_dashboard(table.data, table.columns),
+        f"{prefix}/dashboard": _plotly_eval_dashboard(
+            table.data,
+            table.columns,
+            unlock_threshold=unlock_threshold,
+        ),
     }
     return log_data
 
