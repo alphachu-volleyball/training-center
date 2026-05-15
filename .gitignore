@@ -17,6 +17,7 @@ build/
 
 # Experiments (symlink to Dropbox)
 experiments
+reports
 
 # Experiment logs
 wandb/
