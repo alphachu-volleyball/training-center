@@ -194,30 +194,19 @@ series and is identical to that model's physical side (`p1` or `p2`). `metric` i
 `opponent_score`, `round_frames`, or `game_frames`. `wins`/`losses` are only populated for `win_rate`; `std` is
 populated for score/frame metrics.
 
-#### Script-specific Metrics
-
-| Metric | Script | Timing | Description |
-|--------|--------|--------|-------------|
-| `curriculum/pool_size` | curriculum | eval_freq | Number of unlocked opponents |
-| `curriculum/min_win_rate` | curriculum | eval_freq | Lowest win rate across unlocked pool |
-| `curriculum/avg_win_rate` | curriculum | eval_freq | Average win rate across unlocked pool |
-
 #### Training Metrics (SB3 PPO)
 
-Logged every iteration (after `model.learn()`). Crossplay prefixes with `p1/` or `p2/`.
+Logged every iteration (after `model.learn()`) as one compact Plotly panel.
 
 | Metric | Description |
 |--------|-------------|
-| `train/loss` | PPO total loss |
-| `train/entropy_loss` | Policy entropy (lower = more deterministic) |
-| `train/explained_variance` | Value function accuracy (1.0 = perfect) |
-| `train/approx_kl` | KL divergence between old and new policy |
+| `train/dashboard` | PPO loss, entropy loss, explained variance, and approx KL. Curriculum runs append pool size and self-play pool size subplots. |
 
 #### One-time Outputs
 
 | Metric | Script | Description |
 |--------|--------|-------------|
-| `video/vs_{opp}` | all training | Sample game recording at end of training |
+| `video/samples` | all training | Table of sample game recordings at end of training, grouped by opponent and model side |
 | `matchups` (Table) | evaluate-roundrobin | Per-matchup win rates and stats |
 | `elo_ratings` (Table) | evaluate-roundrobin | Batch Bradley-Terry ELO ratings |
 | `elo/{agent}` (summary) | evaluate-roundrobin | ELO per agent in run summary |

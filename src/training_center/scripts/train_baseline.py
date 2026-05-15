@@ -27,8 +27,11 @@ from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
     build_eval_chart_log_data,
+    build_train_chart_log_data,
+    build_video_log_data,
     combine_per_side_results,
     extend_eval_chart_history,
+    extend_train_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -97,11 +100,24 @@ def _eval_matchup_worker(
 class WandbMetricsCallback(BaseCallback):
     """Forward SB3 training metrics to wandb."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.train_chart_history: list[dict] = []
+        self.last_logged_update: int | None = None
+
     def _on_step(self) -> bool:
         if self.logger is not None and hasattr(self.logger, "name_to_value"):
             metrics = {k: v for k, v in self.logger.name_to_value.items()}
             if metrics:
-                wandb.run.log(metrics, step=self.num_timesteps)
+                n_updates = metrics.get("train/n_updates")
+                if isinstance(n_updates, int | float):
+                    if int(n_updates) == self.last_logged_update:
+                        return True
+                    self.last_logged_update = int(n_updates)
+                history_len = len(self.train_chart_history)
+                extend_train_chart_history(self.train_chart_history, metrics, step=self.num_timesteps)
+                if len(self.train_chart_history) > history_len:
+                    wandb.run.log(build_train_chart_log_data(self.train_chart_history), step=self.num_timesteps)
         return True
 
 
@@ -388,13 +404,22 @@ def main() -> None:
         # video per side so the universal claim is visible in artifacts.
         video_sides = ["player_1", "player_2"] if c.side == "both" else [c.side]
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
+        video_samples = []
         for opp in eval_opps:
             for video_side in video_sides:
                 tag = "p1" if video_side == "player_1" else "p2"
                 suffix = f"_as_{tag}" if c.side == "both" else ""
                 video_path = str(save_path.parent / f"vs_{opp}{suffix}.mp4")
                 record_video(model_zip, video_side, opp, video_path)
-                run.log({f"video/vs_{opp}{suffix}": wandb.Video(video_path, fps=25, format="mp4")})
+                video_samples.append(
+                    {
+                        "opponent": opp,
+                        "model_side": tag,
+                        "video": wandb.Video(video_path, fps=25, format="mp4"),
+                    }
+                )
+        if video_samples:
+            run.log(build_video_log_data(video_samples))
     finally:
         if eval_executor is not None:
             shutdown_executor(eval_executor)

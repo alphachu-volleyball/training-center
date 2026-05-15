@@ -6,9 +6,12 @@ from training_center.scripts.utils import (
     EvalSummary,
     build_eval_chart_log_data,
     build_eval_chart_table,
+    build_train_chart_log_data,
     combine_per_side_results,
     combine_per_side_summaries,
+    extend_curriculum_chart_history,
     extend_eval_chart_history,
+    extend_train_chart_history,
     model_won_per_game,
 )
 
@@ -309,8 +312,70 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     ]
     assert dashboard["layout"]["paper_bgcolor"] == "rgba(255, 255, 255, 0)"
     assert dashboard["layout"]["plot_bgcolor"] == "rgba(255, 255, 255, 0)"
+    assert dashboard["layout"]["autosize"] is True
+    assert "height" not in dashboard["layout"]
     assert "0.75 threshold" not in [trace.get("name") for trace in dashboard["data"]]
     assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
+
+
+def test_train_chart_log_data_compacts_selected_sb3_metrics():
+    history = []
+    extend_train_chart_history(
+        history,
+        {
+            "train/loss": 1.2,
+            "train/entropy_loss": -0.3,
+            "train/explained_variance": 0.4,
+            "train/approx_kl": 0.01,
+            "train/value_loss": 9.9,
+        },
+        step=100,
+    )
+
+    log_data = build_train_chart_log_data(history)
+    dashboard = log_data["train/dashboard"].to_plotly_json()
+
+    assert list(log_data) == ["train/dashboard"]
+    assert dashboard["layout"]["autosize"] is True
+    assert "height" not in dashboard["layout"]
+    assert {trace["name"] for trace in dashboard["data"]} == {
+        "Loss",
+        "Entropy loss",
+        "Explained variance",
+        "Approx KL",
+    }
+    assert "Value loss" not in {trace["name"] for trace in dashboard["data"]}
+
+
+def test_train_chart_log_data_can_append_curriculum_pool_size_subplot():
+    train_history = []
+    extend_train_chart_history(train_history, {"train/loss": 1.2}, step=100)
+    curriculum_history = []
+    extend_curriculum_chart_history(
+        curriculum_history,
+        {"pool_size": 3, "min_win_rate": 0.5, "avg_win_rate": 0.7},
+        iteration=2,
+        step=200,
+        selfplay_pool_size=1,
+    )
+
+    log_data = build_train_chart_log_data(
+        train_history,
+        curriculum_history=curriculum_history,
+    )
+    dashboard = log_data["train/dashboard"].to_plotly_json()
+
+    assert list(log_data) == ["train/dashboard"]
+    assert dashboard["layout"]["autosize"] is True
+    assert "height" not in dashboard["layout"]
+    assert {
+        "Loss",
+        "unlocked pool",
+        "self-play pool",
+    }.issubset({trace["name"] for trace in dashboard["data"]})
+    assert "min win rate" not in {trace["name"] for trace in dashboard["data"]}
+    assert "avg win rate" not in {trace["name"] for trace in dashboard["data"]}
+    assert "unlock threshold (0.75)" not in {trace["name"] for trace in dashboard["data"]}
 
 
 def test_eval_dashboard_uses_dynamic_unlock_threshold():

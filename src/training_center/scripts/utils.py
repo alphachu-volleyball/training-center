@@ -8,6 +8,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from math import sqrt
+from numbers import Real
 from typing import Any
 
 import plotly.graph_objects as go
@@ -25,6 +26,13 @@ NOISE_LEVELS: dict[int, tuple[int, int, int]] = {
     3: (20, 10, 3),
     4: (35, 15, 4),
     5: (50, 20, 5),
+}
+
+TRAIN_DASHBOARD_METRICS: dict[str, str] = {
+    "train/loss": "Loss",
+    "train/entropy_loss": "Entropy loss",
+    "train/explained_variance": "Explained variance",
+    "train/approx_kl": "Approx KL",
 }
 
 
@@ -45,6 +53,145 @@ def parse_noise(
             y_velocity_range=noise_y_vel or 0,
         )
     return None
+
+
+def _transparent_plotly_layout(fig: go.Figure) -> None:
+    fig.update_layout(
+        template="plotly_white",
+        autosize=True,
+        paper_bgcolor="rgba(255, 255, 255, 0)",
+        plot_bgcolor="rgba(255, 255, 255, 0)",
+    )
+    grid_style = {"showgrid": True, "gridcolor": "rgba(31, 45, 61, 0.14)", "zerolinecolor": "rgba(31, 45, 61, 0.18)"}
+    fig.update_xaxes(**grid_style)
+    fig.update_yaxes(**grid_style)
+
+
+def extend_train_chart_history(
+    history: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    step: int,
+) -> list[dict[str, Any]]:
+    """Append selected SB3 metrics to a compact train dashboard history."""
+    for key in TRAIN_DASHBOARD_METRICS:
+        value = metrics.get(key)
+        if isinstance(value, Real):
+            history.append({"step": step, "metric": key, "value": float(value)})
+    return history
+
+
+def build_train_chart_log_data(
+    history: list[dict[str, Any]],
+    *,
+    curriculum_history: list[dict[str, Any]] | None = None,
+    prefix: str = "train",
+) -> dict[str, Any]:
+    """Build one compact dashboard for training diagnostics.
+
+    Curriculum-specific pool traces are appended as extra subplots when
+    curriculum_history is provided, so curriculum runs still live under the
+    train section instead of creating a separate W&B section.
+    """
+    include_curriculum = curriculum_history is not None
+    row_count = len(TRAIN_DASHBOARD_METRICS) + (1 if include_curriculum else 0)
+    subplot_titles = list(TRAIN_DASHBOARD_METRICS.values())
+    if include_curriculum:
+        subplot_titles.append("Curriculum pool size")
+    fig = make_subplots(
+        rows=row_count,
+        cols=1,
+        shared_xaxes=True,
+        subplot_titles=subplot_titles,
+        vertical_spacing=0.06 if include_curriculum else 0.08,
+    )
+    for row, (metric, label) in enumerate(TRAIN_DASHBOARD_METRICS.items(), start=1):
+        metric_rows = [item for item in history if item["metric"] == metric]
+        if not metric_rows:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[item["step"] for item in metric_rows],
+                y=[item["value"] for item in metric_rows],
+                mode="lines+markers",
+                name=label,
+                showlegend=False,
+            ),
+            row=row,
+            col=1,
+        )
+        fig.update_yaxes(title_text=label, row=row, col=1)
+    if include_curriculum:
+        _add_curriculum_train_subplots(
+            fig,
+            curriculum_history or [],
+            len(TRAIN_DASHBOARD_METRICS) + 1,
+        )
+    fig.update_layout(title="Training diagnostics", hovermode="x unified")
+    fig.update_xaxes(title_text="Step", row=row_count, col=1)
+    _transparent_plotly_layout(fig)
+    return {f"{prefix}/dashboard": fig}
+
+
+def extend_curriculum_chart_history(
+    history: list[dict[str, Any]],
+    status: dict[str, Any],
+    *,
+    iteration: int,
+    step: int,
+    selfplay_pool_size: int | None = None,
+) -> list[dict[str, Any]]:
+    """Append curriculum pool status to a compact dashboard history."""
+    history.append({"step": step, "iteration": iteration, "metric": "pool_size", "value": float(status["pool_size"])})
+    if selfplay_pool_size is not None:
+        history.append(
+            {
+                "step": step,
+                "iteration": iteration,
+                "metric": "selfplay_pool_size",
+                "value": float(selfplay_pool_size),
+            }
+        )
+    return history
+
+
+def _add_curriculum_train_subplots(
+    fig: go.Figure,
+    history: list[dict[str, Any]],
+    start_row: int,
+) -> None:
+    """Add curriculum pool traces to the shared train dashboard."""
+    labels = {
+        "pool_size": "unlocked pool",
+        "selfplay_pool_size": "self-play pool",
+    }
+    colors = {
+        "pool_size": "#4c78a8",
+        "selfplay_pool_size": "#b279a2",
+    }
+    for metric in ["pool_size", "selfplay_pool_size"]:
+        rows = [item for item in history if item["metric"] == metric]
+        if rows:
+            fig.add_trace(
+                go.Scatter(
+                    x=[item["step"] for item in rows],
+                    y=[item["value"] for item in rows],
+                    mode="lines+markers",
+                    name=labels[metric],
+                    line={"color": colors[metric]},
+                ),
+                row=start_row,
+                col=1,
+            )
+    fig.update_yaxes(title_text="Count", row=start_row, col=1)
+
+
+def build_video_log_data(samples: list[dict[str, Any]], *, prefix: str = "video") -> dict[str, Any]:
+    """Build one W&B media table for sample videos."""
+    table = wandb.Table(columns=["opponent", "model_side", "video"])
+    for sample in samples:
+        table.add_data(sample["opponent"], sample["model_side"], sample["video"])
+    return {f"{prefix}/samples": table}
 
 
 def worker_init() -> None:
@@ -800,8 +947,8 @@ def _plotly_eval_dashboard(
     ]
     fig.update_layout(
         template="plotly_white",
+        autosize=True,
         title=f"Eval vs {default_opponent}" if default_opponent else "Eval",
-        height=900,
         hovermode="x unified",
         paper_bgcolor="rgba(255, 255, 255, 0)",
         plot_bgcolor="rgba(255, 255, 255, 0)",
