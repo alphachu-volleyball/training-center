@@ -105,6 +105,7 @@ def test_combine_per_side_results_combines_score_and_frame_samples():
     assert abs(combined.summary.avg_game_frames - 250.0) < 1e-9
     assert abs(combined.summary.var_game_frames - 12500.0) < 1e-9
     assert abs(combined.summary.std_game_frames - 111.80339887498948) < 1e-9
+    assert combined.format_score_frame_line() == "    vs builtin: 2W 2L (5.0±0.0 vs 2.5±1.1, frames: 250±112)"
 
 
 def test_eval_summary_formats_score_frame_line():
@@ -117,7 +118,7 @@ def test_eval_summary_formats_score_frame_line():
         game_frames=[100, 120, 140, 160],
     )
     assert summary.format_score_frame_line("random") == (
-        "    vs random: 3W 1L (4.5 ± 0.9 vs 2.0 ± 1.9, frames: 130 ± 22)"
+        "    vs random: 3W 1L (4.5±0.9 vs 2.0±1.9, frames: 130±22)"
     )
 
 
@@ -146,7 +147,7 @@ def test_eval_result_carries_identity_and_formats_without_external_label():
     assert result.to_record()["step"] == 10_000
     assert result.to_record()["winning_score"] == 5
     assert result.to_record()["opponent_spec"] == "builtin"
-    assert result.format_score_frame_line() == "    vs builtin: 2W 0L (5.0 ± 0.0 vs 1.5 ± 0.5, frames: 110 ± 10)"
+    assert result.format_score_frame_line() == "    vs builtin: 2W 0L (5.0±0.0 vs 1.5±0.5, frames: 110±10)"
 
 
 def test_eval_batch_indexes_results():

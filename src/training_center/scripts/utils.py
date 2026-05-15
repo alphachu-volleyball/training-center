@@ -255,11 +255,15 @@ class EvalSummary:
     def format_score_frame_line(self, label: str, *, indent: str = "    ", include_vs: bool = True) -> str:
         """Format wins, scores, and game length for console eval output."""
         label_text = f"vs {label}" if include_vs else label
+        avg_score = self.metric("avg_score", self.avg_p1_score)
+        std_score = self.metric("std_score", self.std_p1_score)
+        avg_opp_score = self.metric("avg_opp_score", self.avg_p2_score)
+        std_opp_score = self.metric("std_opp_score", self.std_p2_score)
         return (
             f"{indent}{label_text}: {self.wins}W {self.losses}L "
-            f"({self.avg_p1_score:.1f} ± {self.std_p1_score:.1f} "
-            f"vs {self.avg_p2_score:.1f} ± {self.std_p2_score:.1f}, "
-            f"frames: {self.avg_game_frames:.0f} ± {self.std_game_frames:.0f})"
+            f"({avg_score:.1f}±{std_score:.1f} "
+            f"vs {avg_opp_score:.1f}±{std_opp_score:.1f}, "
+            f"frames: {self.avg_game_frames:.0f}±{self.std_game_frames:.0f})"
         )
 
 
