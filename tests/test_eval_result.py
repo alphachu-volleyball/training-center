@@ -5,10 +5,8 @@ from training_center.scripts.utils import (
     EvalResult,
     EvalSummary,
     build_eval_chart_log_data,
-    build_eval_frame_chart_table,
+    build_eval_chart_table,
     build_eval_log_data,
-    build_eval_score_chart_table,
-    build_eval_win_rate_chart_table,
     combine_per_side_results,
     combine_per_side_summaries,
     extend_eval_chart_history,
@@ -222,7 +220,7 @@ def test_build_eval_log_data_can_include_verbose_scalars():
     assert data["eval/vs_builtin/std_game_frames"] == 10.0
 
 
-def test_eval_chart_tables_are_long_form():
+def test_eval_chart_table_is_single_long_form_source():
     batch = EvalBatch(
         [
             _result(
@@ -245,15 +243,28 @@ def test_eval_chart_tables_are_long_form():
         step=1234,
     )
 
-    score_table = build_eval_score_chart_table({"p1": batch})
-    win_rate_table = build_eval_win_rate_chart_table({"p1": batch})
-    frame_table = build_eval_frame_chart_table({"p1": batch})
+    table = build_eval_chart_table({"p1": batch})
+    rows = {row[4]: row for row in table.data}
 
-    assert score_table.data[0][:6] == [1234, 7, "builtin", "p1", "model_score", 4.0]
-    assert score_table.data[1][:6] == [1234, 7, "builtin", "p1", "opponent_score", 3.0]
-    assert win_rate_table.data[0][:5] == [1234, 7, "builtin", "p1", 0.5]
-    assert frame_table.data[0][:6] == [1234, 7, "builtin", "p1", "round_frames", 0.0]
-    assert frame_table.data[1][:6] == [1234, 7, "builtin", "p1", "game_frames", 110.0]
+    assert table.columns == [
+        "step",
+        "iteration",
+        "opponent",
+        "eval_side",
+        "metric",
+        "value",
+        "std",
+        "ci95_low",
+        "ci95_high",
+        "n",
+        "wins",
+        "losses",
+    ]
+    assert rows["win_rate"][:6] == [1234, 7, "builtin", "p1", "win_rate", 0.5]
+    assert rows["model_score"][:6] == [1234, 7, "builtin", "p1", "model_score", 4.0]
+    assert rows["opponent_score"][:6] == [1234, 7, "builtin", "p1", "opponent_score", 3.0]
+    assert rows["round_frames"][:6] == [1234, 7, "builtin", "p1", "round_frames", 0.0]
+    assert rows["game_frames"][:6] == [1234, 7, "builtin", "p1", "game_frames", 110.0]
 
 
 def test_eval_win_rate_chart_table_uses_nonzero_wilson_ci_at_extremes():
@@ -272,8 +283,9 @@ def test_eval_win_rate_chart_table_uses_nonzero_wilson_ci_at_extremes():
         step=1234,
     )
 
-    table = build_eval_win_rate_chart_table({"p1": batch})
-    _, _, _, _, win_rate, ci_low, ci_high, wins, losses, n = table.data[0]
+    table = build_eval_chart_table({"p1": batch})
+    win_rate_row = next(row for row in table.data if row[4] == "win_rate")
+    _, _, _, _, _, win_rate, _, ci_low, ci_high, n, wins, losses = win_rate_row
 
     assert win_rate == 0.0
     assert ci_low == 0.0
@@ -324,9 +336,7 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     log_data = build_eval_chart_log_data({"p1": batch})
 
     assert set(log_data) == {
-        "eval_charts/score_table",
-        "eval_charts/win_rate_table",
-        "eval_charts/frame_table",
+        "eval_charts/table",
         "eval_charts/dashboard",
     }
     fills = [trace.get("fill") for trace in log_data["eval_charts/dashboard"].to_plotly_json()["data"]]
@@ -383,9 +393,9 @@ def test_extend_eval_chart_history_returns_cumulative_batches():
     assert [result.step for result in cumulative["p1"].results] == [100]
 
     cumulative = extend_eval_chart_history(history, {"p1": second})
-    score_table = build_eval_score_chart_table(cumulative)
+    table = build_eval_chart_table(cumulative)
 
-    assert [row[0] for row in score_table.data if row[4] == "model_score"] == [100, 200]
+    assert [row[0] for row in table.data if row[4] == "model_score"] == [100, 200]
 
 
 def test_model_won_per_game():

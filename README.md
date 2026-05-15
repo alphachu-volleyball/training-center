@@ -221,19 +221,17 @@ Universal-model runs also log side-specific core scalars under `eval/p1/vs_{opp}
 
 ##### Eval Chart Tables and Plots
 
-Logged by default. `eval_charts/dashboard` is built from the three chart tables in the same log payload, not from
-summary scalars. Each eval log rewrites these chart objects with cumulative rows from the current run so the latest
-panel shows the full eval history.
+Logged by default. `eval_charts/dashboard` is built from `eval_charts/table` in the same log payload, not from summary
+scalars. Each eval log rewrites these chart objects with cumulative rows from the current run so the latest panel
+shows the full eval history.
 
 | Key | Columns | Purpose |
 |-----|---------|---------|
 | `eval_charts/dashboard` | Plotly figure | Dropdown-selected opponent view with win-rate, model score, opponent score, and round-frame subplots together |
-| `eval_charts/score_table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `mean`, `std`, `ci95_low`, `ci95_high`, `n` | Score curves with p1/p2/combined legends and 95% CI bands |
-| `eval_charts/win_rate_table` | `step`, `iteration`, `opponent`, `eval_side`, `win_rate`, `ci95_low`, `ci95_high`, `wins`, `losses`, `n` | Win-rate curves with binomial 95% CI bands |
-| `eval_charts/frame_table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `mean`, `std`, `ci95_low`, `ci95_high`, `n` | Round-frame and game-frame curves with 95% CI bands |
+| `eval_charts/table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `value`, `std`, `ci95_low`, `ci95_high`, `n`, `wins`, `losses` | Single long-form source table for all dashboard curves and uncertainty bands |
 
-`eval_side` is `combined`, `p1`, or `p2`. `score_table.metric` is `model_score` or `opponent_score`;
-`frame_table.metric` is `round_frames` or `game_frames`.
+`eval_side` is `combined`, `p1`, or `p2`. `metric` is `win_rate`, `model_score`, `opponent_score`, `round_frames`,
+or `game_frames`. `wins`/`losses` are only populated for `win_rate`; `std` is populated for score/frame metrics.
 
 ##### Verbose Eval Scalars
 

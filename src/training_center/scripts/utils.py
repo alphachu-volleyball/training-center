@@ -440,120 +440,69 @@ def _eval_side_label(label: str, result: EvalResult) -> str:
     return label
 
 
-def build_eval_score_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
-    """Build a long-form score table for compact custom W&B charts."""
+def build_eval_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
+    """Build one long-form eval table used by all W&B eval charts."""
     columns = [
         "step",
         "iteration",
         "opponent",
         "eval_side",
         "metric",
-        "mean",
+        "value",
         "std",
         "ci95_low",
         "ci95_high",
         "n",
+        "wins",
+        "losses",
     ]
     rows: list[list[Any]] = []
     for label, batch in batches.items():
         for result in batch.results:
             data = result.to_log_dict()
-            for metric, mean_key, std_key in [
-                ("model_score", "avg_score", "std_score"),
-                ("opponent_score", "avg_opp_score", "std_opp_score"),
-            ]:
-                mean = float(data.get(mean_key, 0.0))
-                std = float(data.get(std_key, 0.0))
-                ci_low, ci_high = _normal_ci95(mean, std, result.games)
-                rows.append(
-                    [
-                        result.step,
-                        result.iteration,
-                        result.opponent_name,
-                        _eval_side_label(label, result),
-                        metric,
-                        mean,
-                        std,
-                        ci_low,
-                        ci_high,
-                        result.games,
-                    ]
-                )
-    return wandb.Table(data=rows, columns=columns)
+            side = _eval_side_label(label, result)
 
-
-def build_eval_win_rate_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
-    """Build a long-form win-rate table for compact custom W&B charts."""
-    columns = [
-        "step",
-        "iteration",
-        "opponent",
-        "eval_side",
-        "win_rate",
-        "ci95_low",
-        "ci95_high",
-        "wins",
-        "losses",
-        "n",
-    ]
-    rows: list[list[Any]] = []
-    for label, batch in batches.items():
-        for result in batch.results:
             ci_low, ci_high = _binomial_ci95(result.wins, result.games)
             rows.append(
                 [
                     result.step,
                     result.iteration,
                     result.opponent_name,
-                    _eval_side_label(label, result),
+                    side,
+                    "win_rate",
                     result.win_rate,
+                    None,
                     ci_low,
                     ci_high,
+                    result.games,
                     result.wins,
                     result.losses,
-                    result.games,
                 ]
             )
-    return wandb.Table(data=rows, columns=columns)
 
-
-def build_eval_frame_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
-    """Build a long-form frame table for compact custom W&B charts."""
-    columns = [
-        "step",
-        "iteration",
-        "opponent",
-        "eval_side",
-        "metric",
-        "mean",
-        "std",
-        "ci95_low",
-        "ci95_high",
-        "n",
-    ]
-    rows: list[list[Any]] = []
-    for label, batch in batches.items():
-        for result in batch.results:
-            data = result.to_log_dict()
             for metric, mean_key, std_key in [
+                ("model_score", "avg_score", "std_score"),
+                ("opponent_score", "avg_opp_score", "std_opp_score"),
                 ("round_frames", "avg_round_frames", "std_round_frames"),
                 ("game_frames", "avg_game_frames", "std_game_frames"),
             ]:
-                mean = float(data.get(mean_key, 0.0))
+                value = float(data.get(mean_key, 0.0))
                 std = float(data.get(std_key, 0.0))
-                ci_low, ci_high = _normal_ci95(mean, std, result.games)
+                ci_low, ci_high = _normal_ci95(value, std, result.games)
                 rows.append(
                     [
                         result.step,
                         result.iteration,
                         result.opponent_name,
-                        _eval_side_label(label, result),
+                        side,
                         metric,
-                        mean,
+                        value,
                         std,
                         ci_low,
                         ci_high,
                         result.games,
+                        None,
+                        None,
                     ]
                 )
     return wandb.Table(data=rows, columns=columns)
@@ -655,21 +604,10 @@ def _add_plotly_ci_series(
     trace_opponents.append(opponent)
 
 
-def _plotly_opponent_dashboard(
-    score_rows: list[list[Any]],
-    score_columns: list[str],
-    win_rate_rows: list[list[Any]],
-    win_rate_columns: list[str],
-    frame_rows: list[list[Any]],
-    frame_columns: list[str],
-) -> go.Figure:
+def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figure:
     """Build one dropdown-driven dashboard with core eval curves together."""
-    score_data = _rows_to_dicts(score_rows, score_columns)
-    win_rate_data = _rows_to_dicts(win_rate_rows, win_rate_columns)
-    frame_data = [
-        row for row in _rows_to_dicts(frame_rows, frame_columns) if row.get("metric") == "round_frames"
-    ]
-    opponents = sorted({str(row["opponent"]) for row in score_data + win_rate_data + frame_data})
+    data = _rows_to_dicts(rows, columns)
+    opponents = sorted({str(row["opponent"]) for row in data})
     default_opponent = opponents[0] if opponents else ""
 
     fig = make_subplots(
@@ -691,7 +629,9 @@ def _plotly_opponent_dashboard(
         visible = opponent == default_opponent
         for side in ["combined", "p1", "p2"]:
             win_side_rows = [
-                row for row in win_rate_data if row["opponent"] == opponent and row["eval_side"] == side
+                row
+                for row in data
+                if row["opponent"] == opponent and row["eval_side"] == side and row["metric"] == "win_rate"
             ]
             if win_side_rows:
                 win_side_rows.sort(key=lambda row: row["step"])
@@ -701,7 +641,7 @@ def _plotly_opponent_dashboard(
                     row=1,
                     col=1,
                     x=x,
-                    y=[row["win_rate"] for row in win_side_rows],
+                    y=[row["value"] for row in win_side_rows],
                     y_low=[row["ci95_low"] for row in win_side_rows],
                     y_high=[row["ci95_high"] for row in win_side_rows],
                     side=side,
@@ -713,7 +653,7 @@ def _plotly_opponent_dashboard(
                     opponent=opponent,
                     customdata=[
                         [
-                            None,
+                            row.get("std"),
                             row.get("n"),
                             row.get("wins"),
                             row.get("losses"),
@@ -731,7 +671,7 @@ def _plotly_opponent_dashboard(
             ]:
                 score_side_rows = [
                     row
-                    for row in score_data
+                    for row in data
                     if row["opponent"] == opponent and row["eval_side"] == side and row["metric"] == metric
                 ]
                 if score_side_rows:
@@ -742,7 +682,7 @@ def _plotly_opponent_dashboard(
                         row=subplot_row,
                         col=1,
                         x=x,
-                        y=[row["mean"] for row in score_side_rows],
+                        y=[row["value"] for row in score_side_rows],
                         y_low=[row["ci95_low"] for row in score_side_rows],
                         y_high=[row["ci95_high"] for row in score_side_rows],
                         side=side,
@@ -767,7 +707,9 @@ def _plotly_opponent_dashboard(
                     )
 
             frame_side_rows = [
-                row for row in frame_data if row["opponent"] == opponent and row["eval_side"] == side
+                row
+                for row in data
+                if row["opponent"] == opponent and row["eval_side"] == side and row["metric"] == "round_frames"
             ]
             if frame_side_rows:
                 frame_side_rows.sort(key=lambda row: row["step"])
@@ -777,7 +719,7 @@ def _plotly_opponent_dashboard(
                     row=4,
                     col=1,
                     x=x,
-                    y=[row["mean"] for row in frame_side_rows],
+                    y=[row["value"] for row in frame_side_rows],
                     y_low=[row["ci95_low"] for row in frame_side_rows],
                     y_high=[row["ci95_high"] for row in frame_side_rows],
                     side=side,
@@ -801,7 +743,7 @@ def _plotly_opponent_dashboard(
                     value_column="round_frames",
                 )
 
-        steps = sorted({row["step"] for row in win_rate_data if row["opponent"] == opponent})
+        steps = sorted({row["step"] for row in data if row["opponent"] == opponent and row["metric"] == "win_rate"})
         if steps:
             fig.add_trace(
                 go.Scatter(
@@ -873,21 +815,10 @@ def build_eval_chart_log_data(
     The Plotly dashboard is derived only from the tables returned here. Scalar
     summaries remain separate quick-look metrics and are not chart inputs.
     """
-    score_table = build_eval_score_chart_table(batches)
-    win_rate_table = build_eval_win_rate_chart_table(batches)
-    frame_table = build_eval_frame_chart_table(batches)
+    table = build_eval_chart_table(batches)
     log_data: dict[str, Any] = {
-        f"{prefix}/score_table": score_table,
-        f"{prefix}/win_rate_table": win_rate_table,
-        f"{prefix}/frame_table": frame_table,
-        f"{prefix}/dashboard": _plotly_opponent_dashboard(
-            score_table.data,
-            score_table.columns,
-            win_rate_table.data,
-            win_rate_table.columns,
-            frame_table.data,
-            frame_table.columns,
-        ),
+        f"{prefix}/table": table,
+        f"{prefix}/dashboard": _plotly_eval_dashboard(table.data, table.columns),
     }
     return log_data
 
