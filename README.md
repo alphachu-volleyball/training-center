@@ -196,27 +196,69 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 > [!IMPORTANT]
 > All models are evaluated on their **training side**. `SimplifyObservation` mirrors player_2's x-axis so both sides see a left-side perspective, but the underlying physics engine has [intentional left-right asymmetries](https://github.com/alphachu-volleyball/pika-zoo#physics-engine-left-right-asymmetry) that make cross-side transfer imperfect. The evaluate script takes separate `--p1`/`--p2` pools to ensure correct placement.
 
-#### Evaluation Metrics (`eval/vs_{opp}/`)
+#### Evaluation Metrics
 
-Shared across all training scripts. Logged every `--eval-freq` steps/iterations.
+Shared across all training scripts. Logged every `--eval-freq` steps/iterations. Eval logging has two layers:
+
+- **Core scalars**: a small set of W&B scalar keys for quick dashboards, sweeps, and summaries.
+- **Chart tables**: compact long-form `wandb.Table`s that feed the Plotly dashboard and keep chart data out of hundreds of scalar panels.
+
 `{opp}`: `random`, `builtin`, `stone`, `duckll:N`, `p2`/`p1` (crossplay only)
+
+##### Core Scalars (`eval/vs_{opp}/`)
+
+Logged by default.
 
 | Metric | Range | Description |
 |--------|-------|-------------|
 | `eval/vs_{opp}/win_rate` | 0–1 | Win rate over eval games |
 | `eval/vs_{opp}/avg_score` | 0–5 | Average model score per game |
+| `eval/vs_{opp}/avg_opp_score` | 0–5 | Average opponent score per game |
+| `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
+| `eval/elo` | varies | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
+
+Universal-model runs also log side-specific core scalars under `eval/p1/vs_{opp}/...` and `eval/p2/vs_{opp}/...`. Crossplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_rate`).
+
+##### Eval Chart Tables and Plots
+
+Logged by default. `eval_charts/dashboard` is built from the three chart tables in the same log payload, not from
+summary scalars. Each eval log rewrites these chart objects with cumulative rows from the current run so the latest
+panel shows the full eval history.
+
+| Key | Columns | Purpose |
+|-----|---------|---------|
+| `eval_charts/dashboard` | Plotly figure | Dropdown-selected opponent view with win-rate, model score, opponent score, and round-frame subplots together |
+| `eval_charts/score_table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `mean`, `std`, `ci95_low`, `ci95_high`, `n` | Score curves with p1/p2/combined legends and 95% CI bands |
+| `eval_charts/win_rate_table` | `step`, `iteration`, `opponent`, `eval_side`, `win_rate`, `ci95_low`, `ci95_high`, `wins`, `losses`, `n` | Win-rate curves with binomial 95% CI bands |
+| `eval_charts/frame_table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `mean`, `std`, `ci95_low`, `ci95_high`, `n` | Round-frame and game-frame curves with 95% CI bands |
+
+`eval_side` is `combined`, `p1`, or `p2`. `score_table.metric` is `model_score` or `opponent_score`;
+`frame_table.metric` is `round_frames` or `game_frames`.
+
+##### Verbose Eval Scalars
+
+Detailed scalar panels can be restored with `--log-verbose-eval-scalars`.
+Legacy `var_*` score/frame keys are also logged in this mode for compatibility, but dashboards should prefer
+`std_*` or the chart-table confidence interval columns.
+
+| Metric | Range | Description |
+|--------|-------|-------------|
+| `eval/vs_{opp}/std_score` | ≥ 0 | Std dev of model score per game |
+| `eval/vs_{opp}/std_opp_score` | ≥ 0 | Std dev of opponent score per game |
+| `eval/vs_{opp}/avg_p1_score` | 0–5 | Average physical player_1 score per game |
+| `eval/vs_{opp}/std_p1_score` | ≥ 0 | Std dev of physical player_1 score per game |
+| `eval/vs_{opp}/avg_p2_score` | 0–5 | Average physical player_2 score per game |
+| `eval/vs_{opp}/std_p2_score` | ≥ 0 | Std dev of physical player_2 score per game |
+| `eval/vs_{opp}/avg_game_frames` | > 0 | Mean frames per game |
+| `eval/vs_{opp}/std_game_frames` | ≥ 0 | Std dev of game duration |
 | `eval/vs_{opp}/serve_win_rate` | 0–1 | Scoring rate when model serves |
 | `eval/vs_{opp}/receive_win_rate` | 0–1 | Scoring rate when opponent serves |
-| `eval/vs_{opp}/avg_round_frames` | > 0 | Mean frames per round (25 FPS) |
 | `eval/vs_{opp}/std_round_frames` | ≥ 0 | Std of round duration (low = repetitive pattern) |
 | `eval/vs_{opp}/action_entropy` | 0–log₂18 | Shannon entropy of action distribution |
 | `eval/vs_{opp}/power_hit_rate` | 0–1 | Power hits / ball touches |
 | `eval/vs_{opp}/ball_own_side_ratio` | 0–1 | Fraction of frames ball is on model's court half |
 | `eval/vs_{opp}/serve_avg_round_frames` | > 0 | Mean round frames when model serves |
 | `eval/vs_{opp}/receive_avg_round_frames` | > 0 | Mean round frames when opponent serves |
-| `eval/elo` | varies | ELO rating via batch Bradley-Terry MLE (1500 = geometric mean) |
-
-Crossplay prefixes eval keys with `p1/` or `p2/` (e.g. `p1/eval/vs_builtin/win_rate`).
 
 #### Script-specific Metrics
 

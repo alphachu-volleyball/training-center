@@ -39,8 +39,10 @@ from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
+    build_eval_chart_log_data,
     build_eval_log_data,
     combine_per_side_results,
+    extend_eval_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -246,6 +248,11 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name")
+    parser.add_argument(
+        "--log-verbose-eval-scalars",
+        action="store_true",
+        help="Log all detailed eval scalars in addition to compact eval chart tables",
+    )
     args = parser.parse_args()
 
     ladder = list(args.ladder)
@@ -290,6 +297,7 @@ def main() -> None:
             "ent_coef": args.ent_coef,
             "ladder": ladder,
             "selfplay_pool_size": args.selfplay_pool_size if SELF_ENTRY in ladder else None,
+            "log_verbose_eval_scalars": args.log_verbose_eval_scalars,
             **meta,
         },
     )
@@ -334,6 +342,7 @@ def main() -> None:
     # ~args.eval_games games per opponent (not 2x).
     eval_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
     per_side_eval_games = args.eval_games // len(eval_sides)
+    eval_chart_history: dict[str, list[EvalResult]] = {}
 
     try:
         for iteration in range(args.total_iterations):
@@ -431,7 +440,8 @@ def main() -> None:
                 if SELF_ENTRY in pool.unlocked:
                     log_data["curriculum/selfplay_pool_size"] = len(selfplay_pool)
 
-                log_data.update(build_eval_log_data(eval_batch, "eval"))
+                eval_chart_batches = {"combined": eval_batch}
+                log_data.update(build_eval_log_data(eval_batch, "eval", include_verbose=args.log_verbose_eval_scalars))
                 if len(eval_sides) == 2:
                     p1_batch = EvalBatch(
                         list(results_per_side["player_1"].values()),
@@ -443,8 +453,19 @@ def main() -> None:
                         iteration=iteration,
                         step=step,
                     )
-                    log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
-                    log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
+                    eval_chart_batches["p1"] = p1_batch
+                    eval_chart_batches["p2"] = p2_batch
+                    log_data.update(
+                        build_eval_log_data(p1_batch, "eval/p1", include_verbose=args.log_verbose_eval_scalars)
+                    )
+                    log_data.update(
+                        build_eval_log_data(p2_batch, "eval/p2", include_verbose=args.log_verbose_eval_scalars)
+                    )
+                log_data.update(
+                    build_eval_chart_log_data(
+                        extend_eval_chart_history(eval_chart_history, eval_chart_batches),
+                    )
+                )
 
                 run.log(log_data, step=step)
 

@@ -27,8 +27,10 @@ from training_center.model_config import ModelConfig, save_model
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
+    build_eval_chart_log_data,
     build_eval_log_data,
     combine_per_side_results,
+    extend_eval_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -116,6 +118,7 @@ class EvalCallback(BaseCallback):
         eval_games: int = 20,
         eval_opponents: list[str] | None = None,
         executor: ProcessPoolExecutor | None = None,
+        log_verbose_eval_scalars: bool = False,
         verbose: int = 1,
     ) -> None:
         super().__init__(verbose)
@@ -125,6 +128,8 @@ class EvalCallback(BaseCallback):
         self.eval_games = eval_games
         self.eval_opponents = eval_opponents or ["random", "builtin"]
         self.executor = executor
+        self.log_verbose_eval_scalars = log_verbose_eval_scalars
+        self.eval_chart_history: dict[str, list[EvalResult]] = {}
 
     def run_eval(self) -> None:
         """Run evaluation and log results. Called from _on_step and after training ends."""
@@ -211,12 +216,20 @@ class EvalCallback(BaseCallback):
             if self.verbose:
                 print(result.format_score_frame_line())
 
-        log_data.update(build_eval_log_data(eval_batch, "eval"))
+        eval_chart_batches = {"combined": eval_batch}
+        log_data.update(build_eval_log_data(eval_batch, "eval", include_verbose=self.log_verbose_eval_scalars))
         if len(eval_sides) == 2:
             p1_batch = EvalBatch(list(results_per_side["player_1"].values()), step=self.num_timesteps)
             p2_batch = EvalBatch(list(results_per_side["player_2"].values()), step=self.num_timesteps)
-            log_data.update(build_eval_log_data(p1_batch, "eval/p1"))
-            log_data.update(build_eval_log_data(p2_batch, "eval/p2"))
+            eval_chart_batches["p1"] = p1_batch
+            eval_chart_batches["p2"] = p2_batch
+            log_data.update(build_eval_log_data(p1_batch, "eval/p1", include_verbose=self.log_verbose_eval_scalars))
+            log_data.update(build_eval_log_data(p2_batch, "eval/p2", include_verbose=self.log_verbose_eval_scalars))
+        log_data.update(
+            build_eval_chart_log_data(
+                extend_eval_chart_history(self.eval_chart_history, eval_chart_batches),
+            )
+        )
 
         elos = compute_elo(win_counts)
         elo = elos.get(model_name, 1500.0)
@@ -268,6 +281,11 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
+    parser.add_argument(
+        "--log-verbose-eval-scalars",
+        action="store_true",
+        help="Log all detailed eval scalars in addition to compact eval chart tables",
+    )
     args = parser.parse_args()
 
     # Universal model requires observation mirroring to be side-agnostic.
@@ -299,6 +317,7 @@ def main() -> None:
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
             "eval_opponents": args.eval_opponents,
+            "log_verbose_eval_scalars": args.log_verbose_eval_scalars,
             **meta,
         },
     )
@@ -366,6 +385,7 @@ def main() -> None:
             model_config=model_cfg,
             eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
             executor=eval_executor,
+            log_verbose_eval_scalars=c.log_verbose_eval_scalars,
         )
         callbacks.append(eval_cb)
 

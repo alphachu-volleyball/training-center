@@ -4,8 +4,14 @@ from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
     EvalSummary,
+    build_eval_chart_log_data,
+    build_eval_frame_chart_table,
+    build_eval_log_data,
+    build_eval_score_chart_table,
+    build_eval_win_rate_chart_table,
     combine_per_side_results,
     combine_per_side_summaries,
+    extend_eval_chart_history,
     model_won_per_game,
 )
 
@@ -89,6 +95,10 @@ def test_combine_per_side_results_combines_score_and_frame_samples():
     combined = combine_per_side_results(p1, p2)
     assert combined.summary.p1_scores == [5, 5, 2, 4]
     assert combined.summary.p2_scores == [1, 3, 5, 5]
+    assert abs(combined.summary.metric("avg_score") - 5.0) < 1e-9
+    assert abs(combined.summary.metric("std_score") - 0.0) < 1e-9
+    assert abs(combined.summary.metric("avg_opp_score") - 2.5) < 1e-9
+    assert abs(combined.summary.metric("std_opp_score") - 1.118033988749895) < 1e-9
     assert abs(combined.summary.avg_p1_score - 4.0) < 1e-9
     assert abs(combined.summary.var_p1_score - 1.5) < 1e-9
     assert abs(combined.summary.std_p1_score - 1.224744871391589) < 1e-9
@@ -162,6 +172,220 @@ def test_eval_batch_indexes_results():
     assert first.iteration == 3
     assert second.step == 100
     assert [record["opponent_name"] for record in batch.to_records()] == ["random", "builtin"]
+
+
+def test_build_eval_log_data_defaults_to_core_scalars():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=2,
+                losses=0,
+                winners=["player_1", "player_1"],
+                p1_scores=[5, 5],
+                p2_scores=[1, 2],
+                game_frames=[100, 120],
+                metrics={"avg_score": 5.0, "avg_opp_score": 1.5, "avg_round_frames": 50.0},
+            )
+        ]
+    )
+
+    data = build_eval_log_data(batch, "eval")
+
+    assert data == {
+        "eval/vs_builtin/win_rate": 1.0,
+        "eval/vs_builtin/avg_score": 5.0,
+        "eval/vs_builtin/avg_opp_score": 1.5,
+        "eval/vs_builtin/avg_round_frames": 50.0,
+    }
+
+
+def test_build_eval_log_data_can_include_verbose_scalars():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=2,
+                losses=0,
+                winners=["player_1", "player_1"],
+                p1_scores=[5, 5],
+                p2_scores=[1, 2],
+                game_frames=[100, 120],
+                metrics={"avg_score": 5.0, "avg_opp_score": 1.5, "avg_round_frames": 50.0},
+            )
+        ]
+    )
+
+    data = build_eval_log_data(batch, "eval", include_verbose=True)
+
+    assert data["eval/vs_builtin/std_p2_score"] == 0.5
+    assert data["eval/vs_builtin/std_game_frames"] == 10.0
+
+
+def test_eval_chart_tables_are_long_form():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=1,
+                losses=1,
+                winners=["player_1", "player_2"],
+                p1_scores=[5, 3],
+                p2_scores=[1, 5],
+                game_frames=[100, 120],
+                metrics={
+                    "avg_score": 4.0,
+                    "std_score": 1.0,
+                    "avg_opp_score": 3.0,
+                    "std_opp_score": 2.0,
+                },
+            )
+        ],
+        iteration=7,
+        step=1234,
+    )
+
+    score_table = build_eval_score_chart_table({"p1": batch})
+    win_rate_table = build_eval_win_rate_chart_table({"p1": batch})
+    frame_table = build_eval_frame_chart_table({"p1": batch})
+
+    assert score_table.data[0][:6] == [1234, 7, "builtin", "p1", "model_score", 4.0]
+    assert score_table.data[1][:6] == [1234, 7, "builtin", "p1", "opponent_score", 3.0]
+    assert win_rate_table.data[0][:5] == [1234, 7, "builtin", "p1", 0.5]
+    assert frame_table.data[0][:6] == [1234, 7, "builtin", "p1", "round_frames", 0.0]
+    assert frame_table.data[1][:6] == [1234, 7, "builtin", "p1", "game_frames", 110.0]
+
+
+def test_eval_win_rate_chart_table_uses_nonzero_wilson_ci_at_extremes():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=0,
+                losses=10,
+                winners=["player_2"] * 10,
+                p1_scores=[0] * 10,
+                p2_scores=[5] * 10,
+            )
+        ],
+        iteration=7,
+        step=1234,
+    )
+
+    table = build_eval_win_rate_chart_table({"p1": batch})
+    _, _, _, _, win_rate, ci_low, ci_high, wins, losses, n = table.data[0]
+
+    assert win_rate == 0.0
+    assert ci_low == 0.0
+    assert ci_high > 0.0
+    assert (wins, losses, n) == (0, 10, 10)
+
+
+def test_eval_chart_log_data_includes_immediate_plotly_panels():
+    second = _result(
+        "player_1",
+        wins=2,
+        losses=0,
+        winners=["player_1", "player_1"],
+        p1_scores=[5, 5],
+        p2_scores=[1, 2],
+        game_frames=[100, 120],
+        metrics={
+            "avg_score": 5.0,
+            "std_score": 0.0,
+            "avg_opp_score": 1.5,
+            "std_opp_score": 0.5,
+        },
+    )
+    second.opponent_name = "random"
+    batch = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=1,
+                losses=1,
+                winners=["player_1", "player_2"],
+                p1_scores=[5, 3],
+                p2_scores=[1, 5],
+                game_frames=[100, 120],
+                metrics={
+                    "avg_score": 4.0,
+                    "std_score": 1.0,
+                    "avg_opp_score": 3.0,
+                    "std_opp_score": 2.0,
+                },
+            ),
+            second,
+        ],
+        iteration=7,
+        step=1234,
+    )
+
+    log_data = build_eval_chart_log_data({"p1": batch})
+
+    assert set(log_data) == {
+        "eval_charts/score_table",
+        "eval_charts/win_rate_table",
+        "eval_charts/frame_table",
+        "eval_charts/dashboard",
+    }
+    fills = [trace.get("fill") for trace in log_data["eval_charts/dashboard"].to_plotly_json()["data"]]
+    assert "toself" in fills
+    assert "tonexty" not in fills
+    dashboard = log_data["eval_charts/dashboard"].to_plotly_json()
+    assert [button["label"] for button in dashboard["layout"]["updatemenus"][0]["buttons"]] == [
+        "builtin",
+        "random",
+    ]
+    assert [annotation["text"] for annotation in dashboard["layout"]["annotations"]] == [
+        "Win rate",
+        "Model score",
+        "Opponent score",
+        "Round frames",
+    ]
+    assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
+
+
+def test_extend_eval_chart_history_returns_cumulative_batches():
+    history: dict[str, list[EvalResult]] = {}
+    first = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=1,
+                losses=0,
+                winners=["player_1"],
+                p1_scores=[5],
+                p2_scores=[1],
+                metrics={"avg_score": 5.0, "std_score": 0.0, "avg_opp_score": 1.0, "std_opp_score": 0.0},
+            )
+        ],
+        iteration=0,
+        step=100,
+    )
+    second = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=0,
+                losses=1,
+                winners=["player_2"],
+                p1_scores=[2],
+                p2_scores=[5],
+                metrics={"avg_score": 2.0, "std_score": 0.0, "avg_opp_score": 5.0, "std_opp_score": 0.0},
+            )
+        ],
+        iteration=1,
+        step=200,
+    )
+
+    cumulative = extend_eval_chart_history(history, {"p1": first})
+    assert [result.step for result in cumulative["p1"].results] == [100]
+
+    cumulative = extend_eval_chart_history(history, {"p1": second})
+    score_table = build_eval_score_chart_table(cumulative)
+
+    assert [row[0] for row in score_table.data if row[4] == "model_score"] == [100, 200]
 
 
 def test_model_won_per_game():

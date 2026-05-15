@@ -33,7 +33,9 @@ from training_center.pool import OpponentPool, make_opponent_policy
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
+    build_eval_chart_log_data,
     build_eval_log_data,
+    extend_eval_chart_history,
     parse_noise,
     record_video,
     setup_graceful_shutdown,
@@ -313,6 +315,11 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
+    parser.add_argument(
+        "--log-verbose-eval-scalars",
+        action="store_true",
+        help="Log all detailed eval scalars in addition to compact eval chart tables",
+    )
     args = parser.parse_args()
 
     save_dir = Path(args.save_dir)
@@ -356,6 +363,7 @@ def main() -> None:
             "frame_stack": args.frame_stack,
             "eval_games": args.eval_games,
             "save_dir": args.save_dir,
+            "log_verbose_eval_scalars": args.log_verbose_eval_scalars,
             **meta,
         },
     )
@@ -484,6 +492,7 @@ def main() -> None:
 
     best_p1_anchor = -1.0
     best_p2_anchor = -1.0
+    eval_chart_history: dict[str, list[EvalResult]] = {}
 
     setup_graceful_shutdown()
 
@@ -581,8 +590,15 @@ def main() -> None:
                         log_data["p2/eval/vs_p1/win_rate"] = 1.0 - result.win_rate
                         log_data["p2/eval/vs_p1/avg_score"] = result.summary.metric("avg_opp_score")
                         log_data["p2/eval/vs_p1/avg_round_frames"] = result.summary.metric("avg_round_frames")
-                log_data.update(build_eval_log_data(EvalBatch(p1_results), "p1/eval"))
-                log_data.update(build_eval_log_data(EvalBatch(p2_results), "p2/eval"))
+                p1_batch = EvalBatch(p1_results, iteration=iteration, step=step)
+                p2_batch = EvalBatch(p2_results, iteration=iteration, step=step)
+                log_data.update(build_eval_log_data(p1_batch, "p1/eval", include_verbose=args.log_verbose_eval_scalars))
+                log_data.update(build_eval_log_data(p2_batch, "p2/eval", include_verbose=args.log_verbose_eval_scalars))
+                log_data.update(
+                    build_eval_chart_log_data(
+                        extend_eval_chart_history(eval_chart_history, {"p1": p1_batch, "p2": p2_batch}),
+                    )
+                )
 
                 # Compute ELO for p1 and p2
                 for side_label in ["p1", "p2"]:

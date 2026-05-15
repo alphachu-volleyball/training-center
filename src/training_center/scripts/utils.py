@@ -10,8 +10,11 @@ from dataclasses import dataclass, field
 from math import sqrt
 from typing import Any
 
+import plotly.graph_objects as go
+import wandb
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
 from pika_zoo.records.types import GameRecord, GamesRecord
+from plotly.subplots import make_subplots
 
 from training_center.metrics import compute_eval_metrics
 
@@ -69,10 +72,18 @@ def setup_graceful_shutdown() -> None:
     signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
 
-EVAL_METRIC_KEYS = [
+EVAL_CORE_METRIC_KEYS = [
     "win_rate",
     "avg_score",
     "avg_opp_score",
+    "avg_round_frames",
+]
+
+EVAL_VERBOSE_METRIC_KEYS = [
+    "std_score",
+    "var_score",
+    "std_opp_score",
+    "var_opp_score",
     "avg_p1_score",
     "std_p1_score",
     "var_p1_score",
@@ -84,7 +95,6 @@ EVAL_METRIC_KEYS = [
     "var_game_frames",
     "serve_win_rate",
     "receive_win_rate",
-    "avg_round_frames",
     "std_round_frames",
     "action_entropy",
     "power_hit_rate",
@@ -92,6 +102,8 @@ EVAL_METRIC_KEYS = [
     "serve_avg_round_frames",
     "receive_avg_round_frames",
 ]
+
+EVAL_METRIC_KEYS = EVAL_CORE_METRIC_KEYS + EVAL_VERBOSE_METRIC_KEYS
 
 
 def _mean_var(values: list[int | float]) -> tuple[float, float]:
@@ -101,6 +113,32 @@ def _mean_var(values: list[int | float]) -> tuple[float, float]:
     mean = sum(values) / len(values)
     variance = sum((v - mean) ** 2 for v in values) / len(values)
     return float(mean), float(variance)
+
+
+def _mean_std(values: list[int | float]) -> tuple[float, float]:
+    """Return population mean and standard deviation for a metric sample."""
+    mean, variance = _mean_var(values)
+    return mean, sqrt(variance)
+
+
+def _normal_ci95(mean: float, std: float, n: int) -> tuple[float, float]:
+    """Return a normal-approximation 95% confidence interval for a mean."""
+    if n <= 0:
+        return mean, mean
+    half_width = 1.96 * std / sqrt(n)
+    return mean - half_width, mean + half_width
+
+
+def _binomial_ci95(successes: int, n: int) -> tuple[float, float]:
+    """Return a Wilson 95% confidence interval for a proportion."""
+    if n <= 0:
+        return 0.0, 0.0
+    p = successes / n
+    z = 1.96
+    denominator = 1.0 + z**2 / n
+    center = (p + z**2 / (2.0 * n)) / denominator
+    half_width = z * sqrt((p * (1.0 - p) + z**2 / (4.0 * n)) / n) / denominator
+    return max(0.0, center - half_width), min(1.0, center + half_width)
 
 
 @dataclass
@@ -127,12 +165,16 @@ class EvalSummary:
 
         model_scores = p1_scores if model_idx == 0 else p2_scores
         opp_scores = p1_scores if opp_idx == 0 else p2_scores
-        avg_score, _ = _mean_var(model_scores)
-        avg_opp_score, _ = _mean_var(opp_scores)
+        avg_score, std_score = _mean_std(model_scores)
+        avg_opp_score, std_opp_score = _mean_std(opp_scores)
 
         metrics = {
             "avg_score": avg_score,
+            "std_score": std_score,
+            "var_score": std_score**2,
             "avg_opp_score": avg_opp_score,
+            "std_opp_score": std_opp_score,
+            "var_opp_score": std_opp_score**2,
             **compute_eval_metrics(GamesRecord(games=episodes), model_side),
         }
         return cls(
@@ -363,22 +405,490 @@ class EvalBatch:
 def build_eval_log_data(
     results: EvalBatch,
     prefix: str,
+    *,
+    include_verbose: bool = False,
 ) -> dict[str, float]:
     """Build a wandb log_data dict from eval results.
 
     Args:
         results: Batch of eval results.
         prefix: Key prefix (e.g. "eval", "p1/eval", "curriculum").
+        include_verbose: Whether to log every detailed eval scalar. Defaults to
+            core metrics only to avoid W&B panel explosion.
 
     Returns:
         Flat dict like {"eval/vs_builtin/win_rate": 0.8, ...}
     """
+    metric_keys = EVAL_METRIC_KEYS if include_verbose else EVAL_CORE_METRIC_KEYS
     log_data: dict[str, float] = {}
     for opp_name, result in results.by_opponent().items():
         data = result.to_log_dict()
-        for k in EVAL_METRIC_KEYS:
+        for k in metric_keys:
             if k in data:
                 log_data[f"{prefix}/vs_{opp_name}/{k}"] = data[k]
+    return log_data
+
+
+def _eval_side_label(label: str, result: EvalResult) -> str:
+    """Return a compact side label for chart legends."""
+    if label in {"combined", "p1", "p2"}:
+        return label
+    if result.model_side == "player_1":
+        return "p1"
+    if result.model_side == "player_2":
+        return "p2"
+    return label
+
+
+def build_eval_score_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
+    """Build a long-form score table for compact custom W&B charts."""
+    columns = [
+        "step",
+        "iteration",
+        "opponent",
+        "eval_side",
+        "metric",
+        "mean",
+        "std",
+        "ci95_low",
+        "ci95_high",
+        "n",
+    ]
+    rows: list[list[Any]] = []
+    for label, batch in batches.items():
+        for result in batch.results:
+            data = result.to_log_dict()
+            for metric, mean_key, std_key in [
+                ("model_score", "avg_score", "std_score"),
+                ("opponent_score", "avg_opp_score", "std_opp_score"),
+            ]:
+                mean = float(data.get(mean_key, 0.0))
+                std = float(data.get(std_key, 0.0))
+                ci_low, ci_high = _normal_ci95(mean, std, result.games)
+                rows.append(
+                    [
+                        result.step,
+                        result.iteration,
+                        result.opponent_name,
+                        _eval_side_label(label, result),
+                        metric,
+                        mean,
+                        std,
+                        ci_low,
+                        ci_high,
+                        result.games,
+                    ]
+                )
+    return wandb.Table(data=rows, columns=columns)
+
+
+def build_eval_win_rate_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
+    """Build a long-form win-rate table for compact custom W&B charts."""
+    columns = [
+        "step",
+        "iteration",
+        "opponent",
+        "eval_side",
+        "win_rate",
+        "ci95_low",
+        "ci95_high",
+        "wins",
+        "losses",
+        "n",
+    ]
+    rows: list[list[Any]] = []
+    for label, batch in batches.items():
+        for result in batch.results:
+            ci_low, ci_high = _binomial_ci95(result.wins, result.games)
+            rows.append(
+                [
+                    result.step,
+                    result.iteration,
+                    result.opponent_name,
+                    _eval_side_label(label, result),
+                    result.win_rate,
+                    ci_low,
+                    ci_high,
+                    result.wins,
+                    result.losses,
+                    result.games,
+                ]
+            )
+    return wandb.Table(data=rows, columns=columns)
+
+
+def build_eval_frame_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
+    """Build a long-form frame table for compact custom W&B charts."""
+    columns = [
+        "step",
+        "iteration",
+        "opponent",
+        "eval_side",
+        "metric",
+        "mean",
+        "std",
+        "ci95_low",
+        "ci95_high",
+        "n",
+    ]
+    rows: list[list[Any]] = []
+    for label, batch in batches.items():
+        for result in batch.results:
+            data = result.to_log_dict()
+            for metric, mean_key, std_key in [
+                ("round_frames", "avg_round_frames", "std_round_frames"),
+                ("game_frames", "avg_game_frames", "std_game_frames"),
+            ]:
+                mean = float(data.get(mean_key, 0.0))
+                std = float(data.get(std_key, 0.0))
+                ci_low, ci_high = _normal_ci95(mean, std, result.games)
+                rows.append(
+                    [
+                        result.step,
+                        result.iteration,
+                        result.opponent_name,
+                        _eval_side_label(label, result),
+                        metric,
+                        mean,
+                        std,
+                        ci_low,
+                        ci_high,
+                        result.games,
+                    ]
+                )
+    return wandb.Table(data=rows, columns=columns)
+
+
+def extend_eval_chart_history(
+    history: dict[str, list[EvalResult]],
+    batches: dict[str, EvalBatch],
+) -> dict[str, EvalBatch]:
+    """Append current eval batches and return cumulative batches for chart logging."""
+    for label, batch in batches.items():
+        history.setdefault(label, []).extend(batch.results)
+    return {label: EvalBatch(list(results)) for label, results in history.items()}
+
+
+def _rows_to_dicts(rows: list[list[Any]], columns: list[str]) -> list[dict[str, Any]]:
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def _add_plotly_ci_series(
+    fig: go.Figure,
+    *,
+    row: int,
+    col: int,
+    x: list[Any],
+    y: list[float],
+    y_low: list[float],
+    y_high: list[float],
+    side: str,
+    color: str,
+    fillcolor: str,
+    visible: bool,
+    showlegend: bool,
+    trace_opponents: list[str],
+    opponent: str,
+    customdata: list[list[Any]],
+    value_column: str,
+) -> None:
+    fig.add_trace(
+        go.Scatter(
+            x=x + x[::-1],
+            y=y_high + y_low[::-1],
+            mode="lines",
+            line={"width": 0, "color": "rgba(255, 255, 255, 0)"},
+            fill="toself",
+            fillcolor=fillcolor,
+            name=f"{side} 95% CI",
+            showlegend=False,
+            hoverinfo="skip",
+            legendgroup=side,
+            visible=visible,
+        ),
+        row=row,
+        col=col,
+    )
+    trace_opponents.append(opponent)
+    for bound_name, bound_y in [("upper", y_high), ("lower", y_low)]:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=bound_y,
+                mode="lines",
+                line={"width": 1, "color": color, "dash": "dot"},
+                opacity=0.45,
+                name=f"{side} 95% CI {bound_name}",
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup=side,
+                visible=visible,
+            ),
+            row=row,
+            col=col,
+        )
+        trace_opponents.append(opponent)
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y,
+            mode="lines+markers",
+            line={"color": color},
+            marker={"color": color},
+            name=side,
+            showlegend=showlegend,
+            legendgroup=side,
+            customdata=customdata,
+            hovertemplate=(
+                "step=%{x}<br>"
+                f"{value_column}=%{{y:.3f}}<br>"
+                "ci95=[%{customdata[4]:.3f}, %{customdata[5]:.3f}]<br>"
+                "std=%{customdata[0]}<br>"
+                "n=%{customdata[1]}<br>"
+                "wins=%{customdata[2]} losses=%{customdata[3]}<extra></extra>"
+            ),
+            visible=visible,
+        ),
+        row=row,
+        col=col,
+    )
+    trace_opponents.append(opponent)
+
+
+def _plotly_opponent_dashboard(
+    score_rows: list[list[Any]],
+    score_columns: list[str],
+    win_rate_rows: list[list[Any]],
+    win_rate_columns: list[str],
+    frame_rows: list[list[Any]],
+    frame_columns: list[str],
+) -> go.Figure:
+    """Build one dropdown-driven dashboard with core eval curves together."""
+    score_data = _rows_to_dicts(score_rows, score_columns)
+    win_rate_data = _rows_to_dicts(win_rate_rows, win_rate_columns)
+    frame_data = [
+        row for row in _rows_to_dicts(frame_rows, frame_columns) if row.get("metric") == "round_frames"
+    ]
+    opponents = sorted({str(row["opponent"]) for row in score_data + win_rate_data + frame_data})
+    default_opponent = opponents[0] if opponents else ""
+
+    fig = make_subplots(
+        rows=4,
+        cols=1,
+        shared_xaxes=True,
+        subplot_titles=["Win rate", "Model score", "Opponent score", "Round frames"],
+        vertical_spacing=0.08,
+    )
+    color_by_side = {"combined": "#4c78a8", "p1": "#f58518", "p2": "#54a24b"}
+    fill_by_side = {
+        "combined": "rgba(76, 120, 168, 0.36)",
+        "p1": "rgba(245, 133, 24, 0.28)",
+        "p2": "rgba(84, 162, 75, 0.28)",
+    }
+    trace_opponents: list[str] = []
+
+    for opponent in opponents:
+        visible = opponent == default_opponent
+        for side in ["combined", "p1", "p2"]:
+            win_side_rows = [
+                row for row in win_rate_data if row["opponent"] == opponent and row["eval_side"] == side
+            ]
+            if win_side_rows:
+                win_side_rows.sort(key=lambda row: row["step"])
+                x = [row["step"] for row in win_side_rows]
+                _add_plotly_ci_series(
+                    fig,
+                    row=1,
+                    col=1,
+                    x=x,
+                    y=[row["win_rate"] for row in win_side_rows],
+                    y_low=[row["ci95_low"] for row in win_side_rows],
+                    y_high=[row["ci95_high"] for row in win_side_rows],
+                    side=side,
+                    color=color_by_side.get(side, "#777"),
+                    fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
+                    visible=visible,
+                    showlegend=True,
+                    trace_opponents=trace_opponents,
+                    opponent=opponent,
+                    customdata=[
+                        [
+                            None,
+                            row.get("n"),
+                            row.get("wins"),
+                            row.get("losses"),
+                            row["ci95_low"],
+                            row["ci95_high"],
+                        ]
+                        for row in win_side_rows
+                    ],
+                    value_column="win_rate",
+                )
+
+            for subplot_row, metric, value_column in [
+                (2, "model_score", "score"),
+                (3, "opponent_score", "opponent_score"),
+            ]:
+                score_side_rows = [
+                    row
+                    for row in score_data
+                    if row["opponent"] == opponent and row["eval_side"] == side and row["metric"] == metric
+                ]
+                if score_side_rows:
+                    score_side_rows.sort(key=lambda row: row["step"])
+                    x = [row["step"] for row in score_side_rows]
+                    _add_plotly_ci_series(
+                        fig,
+                        row=subplot_row,
+                        col=1,
+                        x=x,
+                        y=[row["mean"] for row in score_side_rows],
+                        y_low=[row["ci95_low"] for row in score_side_rows],
+                        y_high=[row["ci95_high"] for row in score_side_rows],
+                        side=side,
+                        color=color_by_side.get(side, "#777"),
+                        fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
+                        visible=visible,
+                        showlegend=False,
+                        trace_opponents=trace_opponents,
+                        opponent=opponent,
+                        customdata=[
+                            [
+                                row.get("std"),
+                                row.get("n"),
+                                None,
+                                None,
+                                row["ci95_low"],
+                                row["ci95_high"],
+                            ]
+                            for row in score_side_rows
+                        ],
+                        value_column=value_column,
+                    )
+
+            frame_side_rows = [
+                row for row in frame_data if row["opponent"] == opponent and row["eval_side"] == side
+            ]
+            if frame_side_rows:
+                frame_side_rows.sort(key=lambda row: row["step"])
+                x = [row["step"] for row in frame_side_rows]
+                _add_plotly_ci_series(
+                    fig,
+                    row=4,
+                    col=1,
+                    x=x,
+                    y=[row["mean"] for row in frame_side_rows],
+                    y_low=[row["ci95_low"] for row in frame_side_rows],
+                    y_high=[row["ci95_high"] for row in frame_side_rows],
+                    side=side,
+                    color=color_by_side.get(side, "#777"),
+                    fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
+                    visible=visible,
+                    showlegend=False,
+                    trace_opponents=trace_opponents,
+                    opponent=opponent,
+                    customdata=[
+                        [
+                            row.get("std"),
+                            row.get("n"),
+                            None,
+                            None,
+                            row["ci95_low"],
+                            row["ci95_high"],
+                        ]
+                        for row in frame_side_rows
+                    ],
+                    value_column="round_frames",
+                )
+
+        steps = sorted({row["step"] for row in win_rate_data if row["opponent"] == opponent})
+        if steps:
+            fig.add_trace(
+                go.Scatter(
+                    x=[min(steps), max(steps)],
+                    y=[0.75, 0.75],
+                    mode="lines",
+                    line={"color": "#777", "dash": "dash"},
+                    name="0.75 threshold",
+                    showlegend=True,
+                    hoverinfo="skip",
+                    visible=visible,
+                ),
+                row=1,
+                col=1,
+            )
+            trace_opponents.append(opponent)
+
+    buttons = [
+        {
+            "label": opponent,
+            "method": "update",
+            "args": [
+                {"visible": [trace_opponent == opponent for trace_opponent in trace_opponents]},
+                {"title": f"Eval vs {opponent}"},
+            ],
+        }
+        for opponent in opponents
+    ]
+    fig.update_layout(
+        title=f"Eval vs {default_opponent}" if default_opponent else "Eval",
+        height=900,
+        hovermode="x unified",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.16,
+            "xanchor": "left",
+            "x": 0,
+            "bgcolor": "rgba(255, 255, 255, 0.75)",
+        },
+        margin={"l": 60, "r": 30, "t": 130, "b": 50},
+        updatemenus=[
+            {
+                "buttons": buttons,
+                "direction": "down",
+                "showactive": True,
+                "x": 0,
+                "xanchor": "left",
+                "y": 1.3,
+                "yanchor": "top",
+            }
+        ],
+    )
+    fig.update_yaxes(title_text="Win rate", range=[0, 1], row=1, col=1)
+    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=2, col=1)
+    fig.update_yaxes(title_text="Mean score", range=[0, 5], row=3, col=1)
+    fig.update_yaxes(title_text="Frames", row=4, col=1)
+    fig.update_xaxes(title_text="Step", row=4, col=1)
+    return fig
+
+
+def build_eval_chart_log_data(
+    batches: dict[str, EvalBatch],
+    *,
+    prefix: str = "eval_charts",
+) -> dict[str, Any]:
+    """Build W&B chart data from a single source of eval table rows.
+
+    The Plotly dashboard is derived only from the tables returned here. Scalar
+    summaries remain separate quick-look metrics and are not chart inputs.
+    """
+    score_table = build_eval_score_chart_table(batches)
+    win_rate_table = build_eval_win_rate_chart_table(batches)
+    frame_table = build_eval_frame_chart_table(batches)
+    log_data: dict[str, Any] = {
+        f"{prefix}/score_table": score_table,
+        f"{prefix}/win_rate_table": win_rate_table,
+        f"{prefix}/frame_table": frame_table,
+        f"{prefix}/dashboard": _plotly_opponent_dashboard(
+            score_table.data,
+            score_table.columns,
+            win_rate_table.data,
+            win_rate_table.columns,
+            frame_table.data,
+            frame_table.columns,
+        ),
+    }
     return log_data
 
 
@@ -391,11 +901,31 @@ def combine_per_side_summaries(p1_summary: EvalSummary, p2_summary: EvalSummary)
     wins = sum(won_list)
 
     metrics: dict[str, float] = {}
+    model_scores = p1_summary.p1_scores + p2_summary.p2_scores
+    opp_scores = p1_summary.p2_scores + p2_summary.p1_scores
+    avg_score, std_score = _mean_std(model_scores)
+    avg_opp_score, std_opp_score = _mean_std(opp_scores)
+    metrics.update(
+        {
+            "avg_score": avg_score,
+            "std_score": std_score,
+            "var_score": std_score**2,
+            "avg_opp_score": avg_opp_score,
+            "std_opp_score": std_opp_score,
+            "var_opp_score": std_opp_score**2,
+        }
+    )
     p1_data = p1_summary.to_log_dict()
     p2_data = p2_summary.to_log_dict()
     for k in EVAL_METRIC_KEYS:
         if k in {
             "win_rate",
+            "avg_score",
+            "std_score",
+            "var_score",
+            "avg_opp_score",
+            "std_opp_score",
+            "var_opp_score",
             "avg_p1_score",
             "std_p1_score",
             "var_p1_score",
