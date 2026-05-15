@@ -1733,6 +1733,7 @@ dependencies = [
     { name = "pika-zoo" },
     { name = "stable-baselines3" },
     { name = "wandb" },
+    { name = "wandb-workspaces" },
 ]
 
 [package.optional-dependencies]
@@ -1761,6 +1762,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "stable-baselines3", specifier = ">=2.4.0" },
     { name = "wandb", specifier = ">=0.19.0" },
+    { name = "wandb-workspaces", specifier = ">=0.3.9" },
 ]
 provides-extras = ["rendering", "dev"]
 
@@ -1880,4 +1882,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/11/19/466c1d03323a4a0ed7d4036a59b18d6b6f67cb5032e444205927e226b18d/wandb-0.25.1-py3-none-win32.whl", hash = "sha256:8f2d04f16b88d65bfba9d79fb945f6c64e2686215469a841936e0972be8ec6a5", size = 24967338, upload-time = "2026-03-10T23:51:31.833Z" },
     { url = "https://files.pythonhosted.org/packages/89/22/680d34c1587f3a979c701b66d71aa7c42b4ef2fdf0774f67034e618e834e/wandb-0.25.1-py3-none-win_amd64.whl", hash = "sha256:62db5166de14456156d7a85953a58733a631228e6d4248a753605f75f75fb845", size = 24967343, upload-time = "2026-03-10T23:51:36.026Z" },
     { url = "https://files.pythonhosted.org/packages/c4/e8/76836b75d401ff5912aaf513176e64557ceaec4c4946bfd38a698ff84d48/wandb-0.25.1-py3-none-win_arm64.whl", hash = "sha256:cc7c34b70cf4b7be4d395541e82e325fd9d2be978d62c9ec01f1a7141523b6bb", size = 22080774, upload-time = "2026-03-10T23:51:40.196Z" },
+]
+
+[[package]]
+name = "wandb-workspaces"
+version = "0.3.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "wandb" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/d3/3a5ebc8b969ec8d2391bb43e4a3d76ceaee2bfc11c9e9dc96b61577a9092/wandb_workspaces-0.3.9.tar.gz", hash = "sha256:d186faa7b0c4e6c33aecfea833e81ca0256d117b26f7e428f002c14cbf30601c", size = 210169, upload-time = "2026-03-31T15:23:20.337Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/46/112522e555b1fef7129e85065348d20dcb8761171b07614b5d3e95f86759/wandb_workspaces-0.3.9-py3-none-any.whl", hash = "sha256:79fbb9e899e5457f18446fd6a8c066a05709562ad9fe31b3d215ca4749a65f25", size = 100710, upload-time = "2026-03-31T15:23:18.934Z" },
 ]
