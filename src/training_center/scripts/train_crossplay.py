@@ -24,7 +24,6 @@ from pika_zoo.ai import BuiltinAI, DuckllAI, StoneAI
 from pika_zoo.ai.protocol import AIPolicy
 from stable_baselines3 import PPO
 
-from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
@@ -34,7 +33,6 @@ from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
     build_eval_chart_log_data,
-    build_eval_log_data,
     extend_eval_chart_history,
     parse_noise,
     record_video,
@@ -315,11 +313,6 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
-    parser.add_argument(
-        "--log-verbose-eval-scalars",
-        action="store_true",
-        help="Log all detailed eval scalars in addition to compact eval chart tables",
-    )
     args = parser.parse_args()
 
     save_dir = Path(args.save_dir)
@@ -363,7 +356,6 @@ def main() -> None:
             "frame_stack": args.frame_stack,
             "eval_games": args.eval_games,
             "save_dir": args.save_dir,
-            "log_verbose_eval_scalars": args.log_verbose_eval_scalars,
             **meta,
         },
     )
@@ -586,30 +578,13 @@ def main() -> None:
                         p1_results.append(result)
                     if match.startswith("p2_vs_"):
                         p2_results.append(result)
-                    if match == "p1_vs_p2":
-                        log_data["p2/eval/vs_p1/win_rate"] = 1.0 - result.win_rate
-                        log_data["p2/eval/vs_p1/avg_score"] = result.summary.metric("avg_opp_score")
-                        log_data["p2/eval/vs_p1/avg_round_frames"] = result.summary.metric("avg_round_frames")
                 p1_batch = EvalBatch(p1_results, iteration=iteration, step=step)
                 p2_batch = EvalBatch(p2_results, iteration=iteration, step=step)
-                log_data.update(build_eval_log_data(p1_batch, "p1/eval", include_verbose=args.log_verbose_eval_scalars))
-                log_data.update(build_eval_log_data(p2_batch, "p2/eval", include_verbose=args.log_verbose_eval_scalars))
                 log_data.update(
                     build_eval_chart_log_data(
                         extend_eval_chart_history(eval_chart_history, {"p1": p1_batch, "p2": p2_batch}),
                     )
                 )
-
-                # Compute ELO for p1 and p2
-                for side_label in ["p1", "p2"]:
-                    model_name = f"__{side_label}__"
-                    win_counts: dict[tuple[str, str], tuple[int, int]] = {}
-                    for match, result in matchups.items():
-                        if match.startswith(f"{side_label}_vs_") and match != "p1_vs_p2":
-                            opp_name = match[len(f"{side_label}_vs_") :]
-                            win_counts[(model_name, opp_name)] = (result.wins, result.losses)
-                    elos = compute_elo(win_counts)
-                    log_data[f"{side_label}/eval/elo"] = elos.get(model_name, 1500.0)
 
                 # PFP pool stats update
                 p1_pfp = _update_pool_stats(

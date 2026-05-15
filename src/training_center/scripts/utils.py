@@ -72,18 +72,15 @@ def setup_graceful_shutdown() -> None:
     signal.signal(signal.SIGINT, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
 
 
-EVAL_CORE_METRIC_KEYS = [
+EVAL_METRIC_KEYS = [
     "win_rate",
     "avg_score",
-    "avg_opp_score",
-    "avg_round_frames",
-]
-
-EVAL_VERBOSE_METRIC_KEYS = [
     "std_score",
     "var_score",
+    "avg_opp_score",
     "std_opp_score",
     "var_opp_score",
+    "avg_round_frames",
     "avg_p1_score",
     "std_p1_score",
     "var_p1_score",
@@ -102,8 +99,6 @@ EVAL_VERBOSE_METRIC_KEYS = [
     "serve_avg_round_frames",
     "receive_avg_round_frames",
 ]
-
-EVAL_METRIC_KEYS = EVAL_CORE_METRIC_KEYS + EVAL_VERBOSE_METRIC_KEYS
 
 
 def _mean_var(values: list[int | float]) -> tuple[float, float]:
@@ -400,33 +395,6 @@ class EvalBatch:
     def format_score_frame_lines(self, *, indent: str = "    ", include_vs: bool = True) -> list[str]:
         """Format all results for console output."""
         return [result.format_score_frame_line(indent=indent, include_vs=include_vs) for result in self.results]
-
-
-def build_eval_log_data(
-    results: EvalBatch,
-    prefix: str,
-    *,
-    include_verbose: bool = False,
-) -> dict[str, float]:
-    """Build a wandb log_data dict from eval results.
-
-    Args:
-        results: Batch of eval results.
-        prefix: Key prefix (e.g. "eval", "p1/eval", "curriculum").
-        include_verbose: Whether to log every detailed eval scalar. Defaults to
-            core metrics only to avoid W&B panel explosion.
-
-    Returns:
-        Flat dict like {"eval/vs_builtin/win_rate": 0.8, ...}
-    """
-    metric_keys = EVAL_METRIC_KEYS if include_verbose else EVAL_CORE_METRIC_KEYS
-    log_data: dict[str, float] = {}
-    for opp_name, result in results.by_opponent().items():
-        data = result.to_log_dict()
-        for k in metric_keys:
-            if k in data:
-                log_data[f"{prefix}/vs_{opp_name}/{k}"] = data[k]
-    return log_data
 
 
 def _eval_side_label(label: str, result: EvalResult) -> str:
@@ -808,7 +776,7 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
 def build_eval_chart_log_data(
     batches: dict[str, EvalBatch],
     *,
-    prefix: str = "eval_charts",
+    prefix: str = "eval",
 ) -> dict[str, Any]:
     """Build W&B chart data from a single source of eval table rows.
 

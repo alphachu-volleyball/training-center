@@ -6,7 +6,6 @@ from training_center.scripts.utils import (
     EvalSummary,
     build_eval_chart_log_data,
     build_eval_chart_table,
-    build_eval_log_data,
     combine_per_side_results,
     combine_per_side_summaries,
     extend_eval_chart_history,
@@ -172,54 +171,6 @@ def test_eval_batch_indexes_results():
     assert [record["opponent_name"] for record in batch.to_records()] == ["random", "builtin"]
 
 
-def test_build_eval_log_data_defaults_to_core_scalars():
-    batch = EvalBatch(
-        [
-            _result(
-                "player_1",
-                wins=2,
-                losses=0,
-                winners=["player_1", "player_1"],
-                p1_scores=[5, 5],
-                p2_scores=[1, 2],
-                game_frames=[100, 120],
-                metrics={"avg_score": 5.0, "avg_opp_score": 1.5, "avg_round_frames": 50.0},
-            )
-        ]
-    )
-
-    data = build_eval_log_data(batch, "eval")
-
-    assert data == {
-        "eval/vs_builtin/win_rate": 1.0,
-        "eval/vs_builtin/avg_score": 5.0,
-        "eval/vs_builtin/avg_opp_score": 1.5,
-        "eval/vs_builtin/avg_round_frames": 50.0,
-    }
-
-
-def test_build_eval_log_data_can_include_verbose_scalars():
-    batch = EvalBatch(
-        [
-            _result(
-                "player_1",
-                wins=2,
-                losses=0,
-                winners=["player_1", "player_1"],
-                p1_scores=[5, 5],
-                p2_scores=[1, 2],
-                game_frames=[100, 120],
-                metrics={"avg_score": 5.0, "avg_opp_score": 1.5, "avg_round_frames": 50.0},
-            )
-        ]
-    )
-
-    data = build_eval_log_data(batch, "eval", include_verbose=True)
-
-    assert data["eval/vs_builtin/std_p2_score"] == 0.5
-    assert data["eval/vs_builtin/std_game_frames"] == 10.0
-
-
 def test_eval_chart_table_is_single_long_form_source():
     batch = EvalBatch(
         [
@@ -336,13 +287,13 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     log_data = build_eval_chart_log_data({"p1": batch})
 
     assert set(log_data) == {
-        "eval_charts/table",
-        "eval_charts/dashboard",
+        "eval/table",
+        "eval/dashboard",
     }
-    fills = [trace.get("fill") for trace in log_data["eval_charts/dashboard"].to_plotly_json()["data"]]
+    fills = [trace.get("fill") for trace in log_data["eval/dashboard"].to_plotly_json()["data"]]
     assert "toself" in fills
     assert "tonexty" not in fills
-    dashboard = log_data["eval_charts/dashboard"].to_plotly_json()
+    dashboard = log_data["eval/dashboard"].to_plotly_json()
     assert [button["label"] for button in dashboard["layout"]["updatemenus"][0]["buttons"]] == [
         "builtin",
         "random",
