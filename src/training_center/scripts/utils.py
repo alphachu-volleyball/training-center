@@ -7,6 +7,7 @@ import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+from math import sqrt
 from typing import Any
 
 from pika_zoo.env.pikachu_volleyball import NoiseConfig
@@ -73,10 +74,13 @@ EVAL_METRIC_KEYS = [
     "avg_score",
     "avg_opp_score",
     "avg_p1_score",
+    "std_p1_score",
     "var_p1_score",
     "avg_p2_score",
+    "std_p2_score",
     "var_p2_score",
     "avg_game_frames",
+    "std_game_frames",
     "var_game_frames",
     "serve_win_rate",
     "receive_win_rate",
@@ -158,6 +162,10 @@ class EvalSummary:
         return _mean_var(self.p1_scores)[1]
 
     @property
+    def std_p1_score(self) -> float:
+        return sqrt(self.var_p1_score)
+
+    @property
     def avg_p2_score(self) -> float:
         return _mean_var(self.p2_scores)[0]
 
@@ -166,12 +174,20 @@ class EvalSummary:
         return _mean_var(self.p2_scores)[1]
 
     @property
+    def std_p2_score(self) -> float:
+        return sqrt(self.var_p2_score)
+
+    @property
     def avg_game_frames(self) -> float:
         return _mean_var(self.game_frames)[0]
 
     @property
     def var_game_frames(self) -> float:
         return _mean_var(self.game_frames)[1]
+
+    @property
+    def std_game_frames(self) -> float:
+        return sqrt(self.var_game_frames)
 
     def metric(self, key: str, default: float = 0.0) -> float:
         """Return a named derived metric."""
@@ -184,10 +200,13 @@ class EvalSummary:
             "losses": self.losses,
             "win_rate": self.win_rate,
             "avg_p1_score": self.avg_p1_score,
+            "std_p1_score": self.std_p1_score,
             "var_p1_score": self.var_p1_score,
             "avg_p2_score": self.avg_p2_score,
+            "std_p2_score": self.std_p2_score,
             "var_p2_score": self.var_p2_score,
             "avg_game_frames": self.avg_game_frames,
+            "std_game_frames": self.std_game_frames,
             "var_game_frames": self.var_game_frames,
             "p1_scores": self.p1_scores,
             "p2_scores": self.p2_scores,
@@ -201,9 +220,9 @@ class EvalSummary:
         label_text = f"vs {label}" if include_vs else label
         return (
             f"{indent}{label_text}: {self.wins}W {self.losses}L "
-            f"({self.avg_p1_score:.1f} ± {self.var_p1_score:.1f} "
-            f"vs {self.avg_p2_score:.1f} ± {self.var_p2_score:.1f}, "
-            f"frames: {self.avg_game_frames:.0f} ± {self.var_game_frames:.0f})"
+            f"({self.avg_p1_score:.1f} ± {self.std_p1_score:.1f} "
+            f"vs {self.avg_p2_score:.1f} ± {self.std_p2_score:.1f}, "
+            f"frames: {self.avg_game_frames:.0f} ± {self.std_game_frames:.0f})"
         )
 
 
@@ -378,10 +397,13 @@ def combine_per_side_summaries(p1_summary: EvalSummary, p2_summary: EvalSummary)
         if k in {
             "win_rate",
             "avg_p1_score",
+            "std_p1_score",
             "var_p1_score",
             "avg_p2_score",
+            "std_p2_score",
             "var_p2_score",
             "avg_game_frames",
+            "std_game_frames",
             "var_game_frames",
         }:
             continue
