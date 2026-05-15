@@ -196,7 +196,7 @@ def test_eval_chart_table_is_single_long_form_source():
     )
 
     table = build_eval_chart_table({"p1": batch})
-    rows = {row[4]: row for row in table.data}
+    rows = {(row[3], row[4]): row for row in table.data}
 
     assert table.columns == [
         "step",
@@ -212,11 +212,13 @@ def test_eval_chart_table_is_single_long_form_source():
         "wins",
         "losses",
     ]
-    assert rows["win_rate"][:6] == [1234, 7, "builtin", "p1", "win_rate", 0.5]
-    assert rows["model_score"][:6] == [1234, 7, "builtin", "p1", "model_score", 4.0]
-    assert rows["opponent_score"][:6] == [1234, 7, "builtin", "p1", "opponent_score", 3.0]
-    assert rows["round_frames"][:6] == [1234, 7, "builtin", "p1", "round_frames", 0.0]
-    assert rows["game_frames"][:6] == [1234, 7, "builtin", "p1", "game_frames", 110.0]
+    assert {row[3] for row in table.data} == {"combined", "p1"}
+    assert rows[("combined", "win_rate")][:6] == [1234, 7, "builtin", "combined", "win_rate", 0.5]
+    assert rows[("combined", "model_score")][:6] == [1234, 7, "builtin", "combined", "model_score", 4.0]
+    assert rows[("combined", "opponent_score")][:6] == [1234, 7, "builtin", "combined", "opponent_score", 3.0]
+    assert rows[("combined", "round_frames")][:6] == [1234, 7, "builtin", "combined", "round_frames", 0.0]
+    assert rows[("combined", "game_frames")][:6] == [1234, 7, "builtin", "combined", "game_frames", 110.0]
+    assert rows[("p1", "model_score")][:6] == [1234, 7, "builtin", "p1", "model_score", 4.0]
 
 
 def test_eval_win_rate_chart_table_uses_nonzero_wilson_ci_at_extremes():
@@ -308,6 +310,156 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
 
 
+def test_eval_dashboard_defaults_to_combined_when_available():
+    combined_result = _result(
+        "player_1",
+        wins=1,
+        losses=1,
+        winners=["player_1", "player_2"],
+        p1_scores=[5, 3],
+        p2_scores=[1, 5],
+        metrics={"avg_score": 4.0, "std_score": 1.0, "avg_opp_score": 3.0, "std_opp_score": 2.0},
+    )
+    combined_result.model_side = "both"
+    combined = EvalBatch(
+        [combined_result],
+        iteration=0,
+        step=100,
+    )
+    p1 = EvalBatch(
+        [
+            _result(
+                "player_1",
+                wins=1,
+                losses=0,
+                winners=["player_1"],
+                p1_scores=[5],
+                p2_scores=[1],
+                metrics={"avg_score": 5.0, "std_score": 0.0, "avg_opp_score": 1.0, "std_opp_score": 0.0},
+            )
+        ],
+        iteration=0,
+        step=100,
+    )
+    p2 = EvalBatch(
+        [
+            _result(
+                "player_2",
+                wins=0,
+                losses=1,
+                winners=["player_1"],
+                p1_scores=[5],
+                p2_scores=[2],
+                metrics={"avg_score": 2.0, "std_score": 0.0, "avg_opp_score": 5.0, "std_opp_score": 0.0},
+            )
+        ],
+        iteration=0,
+        step=100,
+    )
+
+    dashboard = build_eval_chart_log_data({"combined": combined, "p1": p1, "p2": p2})["eval/dashboard"].to_plotly_json()
+
+    visible_by_group: dict[str, set[bool | str]] = {}
+    for trace in dashboard["data"]:
+        group = trace.get("legendgroup")
+        if group:
+            visible_by_group.setdefault(group, set()).add(trace.get("visible"))
+
+    assert visible_by_group["combined"] == {True}
+    assert visible_by_group["p1"] == {"legendonly"}
+    assert visible_by_group["p2"] == {"legendonly"}
+
+
+def test_eval_dashboard_does_not_duplicate_combined_when_combined_batch_exists():
+    combined_result = _result(
+        "player_1",
+        wins=1,
+        losses=1,
+        winners=["player_1", "player_2"],
+        p1_scores=[5, 3],
+        p2_scores=[1, 5],
+        metrics={"avg_score": 4.0, "std_score": 1.0, "avg_opp_score": 3.0, "std_opp_score": 2.0},
+    )
+    combined_result.model_side = "both"
+    table = build_eval_chart_table(
+        {
+            "combined": EvalBatch([combined_result], iteration=0, step=100),
+            "p1": EvalBatch(
+                [
+                    _result(
+                        "player_1",
+                        wins=1,
+                        losses=0,
+                        winners=["player_1"],
+                        p1_scores=[5],
+                        p2_scores=[1],
+                        metrics={
+                            "avg_score": 5.0,
+                            "std_score": 0.0,
+                            "avg_opp_score": 1.0,
+                            "std_opp_score": 0.0,
+                        },
+                    )
+                ],
+                iteration=0,
+                step=100,
+            ),
+            "p2": EvalBatch(
+                [
+                    _result(
+                        "player_2",
+                        wins=0,
+                        losses=1,
+                        winners=["player_1"],
+                        p1_scores=[5],
+                        p2_scores=[2],
+                        metrics={
+                            "avg_score": 2.0,
+                            "std_score": 0.0,
+                            "avg_opp_score": 5.0,
+                            "std_opp_score": 0.0,
+                        },
+                    )
+                ],
+                iteration=0,
+                step=100,
+            ),
+        }
+    )
+
+    assert [
+        row for row in table.data if row[2] == "builtin" and row[3] == "combined" and row[4] == "win_rate"
+    ] == [[100, 0, "builtin", "combined", "win_rate", 0.5, None, 0.09452865480086614, 0.9054713451991339, 2, 1, 1]]
+
+
+def test_eval_dashboard_includes_combined_for_single_side_models():
+    batch = EvalBatch(
+        [
+            _result(
+                "player_2",
+                wins=1,
+                losses=0,
+                winners=["player_2"],
+                p1_scores=[1],
+                p2_scores=[5],
+                metrics={"avg_score": 5.0, "std_score": 0.0, "avg_opp_score": 1.0, "std_opp_score": 0.0},
+            )
+        ],
+        iteration=0,
+        step=100,
+    )
+
+    dashboard = build_eval_chart_log_data({"p2": batch})["eval/dashboard"].to_plotly_json()
+    visible_by_group: dict[str, set[bool | str]] = {}
+    for trace in dashboard["data"]:
+        group = trace.get("legendgroup")
+        if group:
+            visible_by_group.setdefault(group, set()).add(trace.get("visible"))
+
+    assert visible_by_group["combined"] == {True}
+    assert visible_by_group["p2"] == {"legendonly"}
+
+
 def test_extend_eval_chart_history_returns_cumulative_batches():
     history: dict[str, list[EvalResult]] = {}
     first = EvalBatch(
@@ -347,7 +499,8 @@ def test_extend_eval_chart_history_returns_cumulative_batches():
     cumulative = extend_eval_chart_history(history, {"p1": second})
     table = build_eval_chart_table(cumulative)
 
-    assert [row[0] for row in table.data if row[4] == "model_score"] == [100, 200]
+    assert [row[0] for row in table.data if row[3] == "combined" and row[4] == "model_score"] == [100, 200]
+    assert [row[0] for row in table.data if row[3] == "p1" and row[4] == "model_score"] == [100, 200]
 
 
 def test_model_won_per_game():

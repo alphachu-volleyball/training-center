@@ -1,7 +1,6 @@
 """Curriculum-based opponent pool for progressive difficulty training.
 
-Unlike OpponentPool (which manages model checkpoint files), CurriculumPool
-manages a ladder of named AI specs (e.g. "builtin", "duckll:5") that are
+CurriculumPool manages a ladder of named AI specs (e.g. "builtin", "duckll:5") that are
 progressively unlocked as the learner improves.
 
 The special spec ``"self"`` represents the learner's own past checkpoints
@@ -12,9 +11,24 @@ around 50% by definition.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import numpy as np
+from stable_baselines3 import PPO
+
 from training_center.pool.common import PFPMixin
 
 SELF_ENTRY = "self"
+
+
+def make_opponent_policy(model: PPO) -> Callable[[np.ndarray], int]:
+    """Wrap an SB3 model as a callable (obs) -> action."""
+
+    def policy(obs: np.ndarray) -> int:
+        action, _ = model.predict(obs, deterministic=True)
+        return int(action)
+
+    return policy
 
 
 class CurriculumPool(PFPMixin):

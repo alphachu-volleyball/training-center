@@ -1,6 +1,5 @@
-"""Opponent pool modules for cross-play and curriculum training."""
+"""Opponent pool modules for curriculum training."""
 
-from training_center.pool.curriculum import CurriculumPool
-from training_center.pool.opponent import OpponentPool, make_opponent_policy
+from training_center.pool.curriculum import CurriculumPool, make_opponent_policy
 
-__all__ = ["CurriculumPool", "OpponentPool", "make_opponent_policy"]
+__all__ = ["CurriculumPool", "make_opponent_policy"]

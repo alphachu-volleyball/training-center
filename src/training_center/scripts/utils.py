@@ -403,13 +403,31 @@ class EvalBatch:
 
 def _eval_side_label(label: str, result: EvalResult) -> str:
     """Return a compact side label for chart legends."""
-    if label in {"combined", "p1", "p2"}:
+    if label in {"p1", "p2"}:
         return label
     if result.model_side == "player_1":
         return "p1"
     if result.model_side == "player_2":
         return "p2"
-    return label
+    return "combined" if label == "combined" else label
+
+
+def _eval_side_labels(label: str, result: EvalResult, *, has_combined_batch: bool) -> list[str]:
+    """Return chart side labels for a result.
+
+    The dashboard always has a representative "combined" series. If callers
+    provide an explicit combined batch, use it as the only combined source. If
+    they only provide side-specific batches, each side also gets a combined
+    alias so single-side dashboards remain structurally consistent.
+    """
+    side = _eval_side_label(label, result)
+    if label == "combined":
+        return ["combined", side] if side != "combined" else ["combined"]
+    if has_combined_batch:
+        return [side]
+    if side in {"p1", "p2"}:
+        return ["combined", side]
+    return [side]
 
 
 def build_eval_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
@@ -429,54 +447,56 @@ def build_eval_chart_table(batches: dict[str, EvalBatch]) -> wandb.Table:
         "losses",
     ]
     rows: list[list[Any]] = []
+    has_combined_batch = "combined" in batches
     for label, batch in batches.items():
         for result in batch.results:
             data = result.to_log_dict()
-            side = _eval_side_label(label, result)
+            side_labels = _eval_side_labels(label, result, has_combined_batch=has_combined_batch)
 
             ci_low, ci_high = _binomial_ci95(result.wins, result.games)
-            rows.append(
-                [
-                    result.step,
-                    result.iteration,
-                    result.opponent_name,
-                    side,
-                    "win_rate",
-                    result.win_rate,
-                    None,
-                    ci_low,
-                    ci_high,
-                    result.games,
-                    result.wins,
-                    result.losses,
-                ]
-            )
-
-            for metric, mean_key, std_key in [
-                ("model_score", "avg_score", "std_score"),
-                ("opponent_score", "avg_opp_score", "std_opp_score"),
-                ("round_frames", "avg_round_frames", "std_round_frames"),
-                ("game_frames", "avg_game_frames", "std_game_frames"),
-            ]:
-                value = float(data.get(mean_key, 0.0))
-                std = float(data.get(std_key, 0.0))
-                ci_low, ci_high = _normal_ci95(value, std, result.games)
+            for side_label in side_labels:
                 rows.append(
                     [
                         result.step,
                         result.iteration,
                         result.opponent_name,
-                        side,
-                        metric,
-                        value,
-                        std,
+                        side_label,
+                        "win_rate",
+                        result.win_rate,
+                        None,
                         ci_low,
                         ci_high,
                         result.games,
-                        None,
-                        None,
+                        result.wins,
+                        result.losses,
                     ]
                 )
+
+                for metric, mean_key, std_key in [
+                    ("model_score", "avg_score", "std_score"),
+                    ("opponent_score", "avg_opp_score", "std_opp_score"),
+                    ("round_frames", "avg_round_frames", "std_round_frames"),
+                    ("game_frames", "avg_game_frames", "std_game_frames"),
+                ]:
+                    value = float(data.get(mean_key, 0.0))
+                    std = float(data.get(std_key, 0.0))
+                    metric_ci_low, metric_ci_high = _normal_ci95(value, std, result.games)
+                    rows.append(
+                        [
+                            result.step,
+                            result.iteration,
+                            result.opponent_name,
+                            side_label,
+                            metric,
+                            value,
+                            std,
+                            metric_ci_low,
+                            metric_ci_high,
+                            result.games,
+                            None,
+                            None,
+                        ]
+                    )
     return wandb.Table(data=rows, columns=columns)
 
 
@@ -506,9 +526,9 @@ def _add_plotly_ci_series(
     side: str,
     color: str,
     fillcolor: str,
-    visible: bool,
+    visible: bool | str,
     showlegend: bool,
-    trace_opponents: list[str],
+    trace_specs: list[tuple[str, str | None]],
     opponent: str,
     customdata: list[list[Any]],
     value_column: str,
@@ -530,7 +550,7 @@ def _add_plotly_ci_series(
         row=row,
         col=col,
     )
-    trace_opponents.append(opponent)
+    trace_specs.append((opponent, side))
     for bound_name, bound_y in [("upper", y_high), ("lower", y_low)]:
         fig.add_trace(
             go.Scatter(
@@ -548,7 +568,7 @@ def _add_plotly_ci_series(
             row=row,
             col=col,
         )
-        trace_opponents.append(opponent)
+        trace_specs.append((opponent, side))
     fig.add_trace(
         go.Scatter(
             x=x,
@@ -573,7 +593,30 @@ def _add_plotly_ci_series(
         row=row,
         col=col,
     )
-    trace_opponents.append(opponent)
+    trace_specs.append((opponent, side))
+
+
+def _default_visible_sides(data: list[dict[str, Any]]) -> dict[str, set[str]]:
+    sides_by_opponent: dict[str, set[str]] = {}
+    for row in data:
+        sides_by_opponent.setdefault(str(row["opponent"]), set()).add(str(row["eval_side"]))
+    return {
+        opponent: {"combined"} if "combined" in sides else sides
+        for opponent, sides in sides_by_opponent.items()
+    }
+
+
+def _eval_trace_visibility(
+    trace_opponent: str,
+    side: str | None,
+    selected_opponent: str,
+    visible_sides_by_opponent: dict[str, set[str]],
+) -> bool | str:
+    if trace_opponent != selected_opponent:
+        return False
+    if side is None or side in visible_sides_by_opponent.get(selected_opponent, set()):
+        return True
+    return "legendonly"
 
 
 def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figure:
@@ -581,6 +624,7 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
     data = _rows_to_dicts(rows, columns)
     opponents = sorted({str(row["opponent"]) for row in data})
     default_opponent = opponents[0] if opponents else ""
+    visible_sides_by_opponent = _default_visible_sides(data)
 
     fig = make_subplots(
         rows=4,
@@ -595,11 +639,11 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
         "p1": "rgba(245, 133, 24, 0.28)",
         "p2": "rgba(84, 162, 75, 0.28)",
     }
-    trace_opponents: list[str] = []
+    trace_specs: list[tuple[str, str | None]] = []
 
     for opponent in opponents:
-        visible = opponent == default_opponent
         for side in ["combined", "p1", "p2"]:
+            visible = _eval_trace_visibility(opponent, side, default_opponent, visible_sides_by_opponent)
             win_side_rows = [
                 row
                 for row in data
@@ -621,7 +665,7 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
                     fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
                     visible=visible,
                     showlegend=True,
-                    trace_opponents=trace_opponents,
+                    trace_specs=trace_specs,
                     opponent=opponent,
                     customdata=[
                         [
@@ -662,7 +706,7 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
                         fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
                         visible=visible,
                         showlegend=False,
-                        trace_opponents=trace_opponents,
+                        trace_specs=trace_specs,
                         opponent=opponent,
                         customdata=[
                             [
@@ -699,7 +743,7 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
                     fillcolor=fill_by_side.get(side, "rgba(119, 119, 119, 0.18)"),
                     visible=visible,
                     showlegend=False,
-                    trace_opponents=trace_opponents,
+                    trace_specs=trace_specs,
                     opponent=opponent,
                     customdata=[
                         [
@@ -726,19 +770,24 @@ def _plotly_eval_dashboard(rows: list[list[Any]], columns: list[str]) -> go.Figu
                     name="0.75 threshold",
                     showlegend=True,
                     hoverinfo="skip",
-                    visible=visible,
+                    visible=_eval_trace_visibility(opponent, None, default_opponent, visible_sides_by_opponent),
                 ),
                 row=1,
                 col=1,
             )
-            trace_opponents.append(opponent)
+            trace_specs.append((opponent, None))
 
     buttons = [
         {
             "label": opponent,
             "method": "update",
             "args": [
-                {"visible": [trace_opponent == opponent for trace_opponent in trace_opponents]},
+                {
+                    "visible": [
+                        _eval_trace_visibility(trace_opponent, side, opponent, visible_sides_by_opponent)
+                        for trace_opponent, side in trace_specs
+                    ]
+                },
                 {"title": f"Eval vs {opponent}"},
             ],
         }
