@@ -84,7 +84,7 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 2. Initialize PPO (or resume from `--init-model`)
 3. `model.learn()` runs continuously for `--timesteps` steps
 4. `EvalCallback` fires every `--eval-freq` steps during training:
-   - Saves a checkpoint to disk
+   - Saves a temporary checkpoint for eval workers and uploads it as a W&B artifact
    - Evaluates against each opponent in parallel (`ProcessPoolExecutor`)
    - Computes win rate and detailed metrics → logs to W&B
 5. Final evaluation after training completes (guarantees last metrics are logged)
@@ -109,7 +109,8 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
    - **Train**: PFP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
    - **Evaluate** (every `--eval-freq` iters + final): play against all unlocked opponents in parallel
    - **Unlock**: if min win rate across pool >= `--unlock-threshold`, unlock next opponent
-4. Saves final model + records sample videos vs all unlocked opponents
+4. Saves self-play snapshots under `selfplay/` only while `self` is unlocked
+5. Saves final model + records sample videos vs all unlocked opponents
 
 **Key design decisions:**
 

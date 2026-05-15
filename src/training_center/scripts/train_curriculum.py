@@ -18,6 +18,7 @@ import argparse
 import multiprocessing
 import os
 import random
+import tempfile
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -342,6 +343,8 @@ def main() -> None:
     eval_chart_history: dict[str, list[EvalResult]] = {}
     train_chart_history: list[dict] = []
     curriculum_chart_history: list[dict] = []
+    eval_checkpoint_tmp = tempfile.TemporaryDirectory(prefix="training-center-curriculum-eval-")
+    eval_checkpoint_root = Path(eval_checkpoint_tmp.name)
 
     try:
         for iteration in range(args.total_iterations):
@@ -367,17 +370,16 @@ def main() -> None:
                             step=model.num_timesteps,
                         )
 
-            # Save periodic checkpoints
-            if iteration % args.save_interval == 0:
-                iter_dir = save_model(model, save_dir / f"iter_{iteration:06d}", model_cfg)
-                if SELF_ENTRY in pool.unlocked:
-                    selfplay_pool.append(str(iter_dir / "model.zip"))
+            # Save periodic self-play snapshots only when self-play is active.
+            if SELF_ENTRY in pool.unlocked and iteration % args.save_interval == 0:
+                iter_dir = save_model(model, save_dir / "selfplay" / f"iter_{iteration:06d}", model_cfg)
+                selfplay_pool.append(str(iter_dir / "model.zip"))
 
             # --- EVALUATE ---
             is_last = iteration == args.total_iterations - 1
             if (iteration + 1) % args.eval_freq == 0 or is_last:
                 step = model.num_timesteps
-                ckpt_dir = save_model(model, save_dir / f"checkpoint_{iteration:06d}", model_cfg)
+                ckpt_dir = save_model(model, eval_checkpoint_root / f"checkpoint_{iteration:06d}", model_cfg)
                 model_path = str(ckpt_dir / "model.zip")
 
                 artifact = wandb.Artifact(f"curriculum-checkpoint-{iteration:06d}", type="model")
@@ -523,6 +525,7 @@ def main() -> None:
         shutdown_executor(eval_executor)
         envs.close()
         run.finish()
+        eval_checkpoint_tmp.cleanup()
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing
 import os
+import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -127,7 +128,7 @@ class EvalCallback(BaseCallback):
     def __init__(
         self,
         eval_freq: int,
-        save_path: Path,
+        checkpoint_root: Path,
         model_config: ModelConfig,
         eval_games: int = 20,
         eval_opponents: list[str] | None = None,
@@ -136,7 +137,7 @@ class EvalCallback(BaseCallback):
     ) -> None:
         super().__init__(verbose)
         self.eval_freq = eval_freq
-        self.save_path = save_path
+        self.checkpoint_root = checkpoint_root
         self.model_config = model_config
         self.eval_games = eval_games
         self.eval_opponents = eval_opponents or ["random", "builtin"]
@@ -146,7 +147,7 @@ class EvalCallback(BaseCallback):
     def run_eval(self) -> None:
         """Run evaluation and log results. Called from _on_step and after training ends."""
         # Save checkpoint
-        ckpt_dir = self.save_path.parent / f"checkpoint_{self.num_timesteps}"
+        ckpt_dir = self.checkpoint_root / f"checkpoint_{self.num_timesteps}"
         save_model(self.model, ckpt_dir, self.model_config)
         model_path = str(ckpt_dir / "model.zip")
 
@@ -371,12 +372,14 @@ def main() -> None:
     )
 
     eval_cb = None
+    eval_checkpoint_tmp = None
     callbacks = [WandbMetricsCallback()]
     if c.eval_freq > 0:
         save_path.parent.mkdir(parents=True, exist_ok=True)
+        eval_checkpoint_tmp = tempfile.TemporaryDirectory(prefix="training-center-baseline-eval-")
         eval_cb = EvalCallback(
             eval_freq=c.eval_freq // c.num_envs,
-            save_path=save_path,
+            checkpoint_root=Path(eval_checkpoint_tmp.name),
             model_config=model_cfg,
             eval_opponents=[s.strip() for s in c.eval_opponents.split(",")],
             executor=eval_executor,
@@ -425,6 +428,8 @@ def main() -> None:
             shutdown_executor(eval_executor)
         env.close()
         run.finish()
+        if eval_checkpoint_tmp is not None:
+            eval_checkpoint_tmp.cleanup()
 
 
 if __name__ == "__main__":
