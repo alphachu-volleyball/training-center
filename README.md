@@ -108,7 +108,7 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 **Process:**
 
 1. Create `DummyVecEnv` (opponent swapping requires in-process access)
-2. Initialize PPO with first few opponents unlocked (stone, random, duckll:1)
+2. Initialize PPO with first few opponents unlocked (default: random, builtin)
 3. For each iteration:
    - **Train**: PFP-sample an opponent from unlocked pool, swap policy, `model.learn(steps_per_iter)`
    - **Evaluate** (every `--eval-freq` iters + final): play against all unlocked opponents in parallel
@@ -119,7 +119,7 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 **Key design decisions:**
 
 - **CurriculumPool** — manages named AI specs (strings) and optional self-play entries. Uses the PFP weighting formula (`1.0 - win_rate + 0.1`).
-- **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
+- **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009, with `stone` removed from the default gate after S009 showed it can block early universal noisy runs on a narrow deterministic P2 receive test. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
 - **No ELO tracking** — pool composition changes on unlock, making ELO scale unstable. Use `evaluate-roundrobin` after training for absolute ELO measurement.
 - **DummyVecEnv** — opponent swapping via `set_opponent_policy()` requires same-process environment access.
 
@@ -181,7 +181,7 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 Shared across all training scripts. Logged every `--eval-freq` steps/iterations. Eval logging uses one long-form
 `wandb.Table` as the source of truth plus one Plotly dashboard.
 
-`{opp}`: `random`, `builtin`, `stone`, `duckll:N`, or `self` when curriculum self-play is enabled
+`{opp}`: any unlocked curriculum opponent such as `random`, `builtin`, `duckll:N`, explicitly configured `stone`, or `self` when curriculum self-play is enabled
 
 ##### Eval Table and Dashboard
 
