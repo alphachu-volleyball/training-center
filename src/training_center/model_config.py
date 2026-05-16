@@ -11,10 +11,13 @@ When a .zip path is given directly (legacy), default config is assumed.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from stable_baselines3 import PPO
+
+from training_center.policy_config import DEFAULT_POLICY, default_policy_kwargs
 
 MODEL_ZIP_NAME = "model.zip"
 MODEL_CONFIG_NAME = "model.json"
@@ -29,6 +32,8 @@ class ModelConfig:
     observation_simplified: bool = False
     observation_normalized: bool = True
     frame_stack: int = 1
+    policy: str = DEFAULT_POLICY
+    policy_kwargs: dict[str, Any] = field(default_factory=default_policy_kwargs)
     name: str | None = None
 
     def save(self, path: Path) -> None:

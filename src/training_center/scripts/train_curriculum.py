@@ -34,7 +34,13 @@ from stable_baselines3.common.callbacks import BaseCallback
 from training_center.env_factory import ensure_stack_size, make_vec_env, set_opponent_policy
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.model_config import ModelConfig, save_model
+from training_center.model_config import ModelConfig, load_model_config, save_model
+from training_center.policy_config import (
+    add_policy_args,
+    ensure_policy_config_matches_init,
+    policy_request_is_explicit,
+    resolve_policy_config,
+)
 from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
@@ -249,6 +255,7 @@ def main() -> None:
     parser.add_argument("--save-interval", type=int, default=10)
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
+    add_policy_args(parser)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name")
@@ -276,6 +283,31 @@ def main() -> None:
     # Self-play checkpoint pool (paths). FIFO ring; populated by save_model below.
     selfplay_pool: deque[str] = deque(maxlen=args.selfplay_pool_size)
 
+    requested_policy, requested_policy_kwargs = resolve_policy_config(
+        policy=args.policy,
+        net_arch=args.net_arch,
+        policy_kwargs_json=args.policy_kwargs_json,
+    )
+    policy_explicit = policy_request_is_explicit(
+        policy=args.policy,
+        net_arch=args.net_arch,
+        policy_kwargs_json=args.policy_kwargs_json,
+    )
+    if args.init_model:
+        _, init_config = load_model_config(args.init_model)
+        if policy_explicit:
+            ensure_policy_config_matches_init(
+                init_policy=init_config.policy,
+                init_policy_kwargs=init_config.policy_kwargs,
+                requested_policy=requested_policy,
+                requested_policy_kwargs=requested_policy_kwargs,
+            )
+        training_policy = init_config.policy
+        training_policy_kwargs = init_config.policy_kwargs
+    else:
+        training_policy = requested_policy
+        training_policy_kwargs = requested_policy_kwargs
+
     run = wandb.init(
         entity=args.wandb_entity,
         project=args.wandb_project,
@@ -294,6 +326,8 @@ def main() -> None:
             "initial_unlocked": args.initial_unlocked,
             "eval_freq": args.eval_freq,
             "ent_coef": args.ent_coef,
+            "policy": training_policy,
+            "policy_kwargs": training_policy_kwargs,
             "ladder": ladder,
             "selfplay_pool_size": args.selfplay_pool_size if SELF_ENTRY in ladder else None,
             **meta,
@@ -313,20 +347,25 @@ def main() -> None:
 
     # Initialize model
     model_cfg = ModelConfig(
-        side=args.side, observation_simplified=args.simplify_observation, frame_stack=args.frame_stack
+        side=args.side,
+        observation_simplified=args.simplify_observation,
+        frame_stack=args.frame_stack,
+        policy=training_policy,
+        policy_kwargs=training_policy_kwargs,
     )
     ppo_kwargs = dict(device="cpu", verbose=0, ent_coef=args.ent_coef)
     if args.init_model:
         model = PPO.load(args.init_model, env=envs, seed=args.seed, **ppo_kwargs)
         print(f"Loaded from {args.init_model}")
     else:
-        model = PPO("MlpPolicy", envs, seed=args.seed, **ppo_kwargs)
+        model = PPO(training_policy, envs, seed=args.seed, policy_kwargs=training_policy_kwargs, **ppo_kwargs)
 
     mp_context = multiprocessing.get_context("forkserver")
     eval_executor = ProcessPoolExecutor(max_workers=os.cpu_count(), mp_context=mp_context, initializer=worker_init)
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), side={args.side}")
+    print(f"Policy: {training_policy}, policy_kwargs={training_policy_kwargs}")
     print(f"Unlock threshold: {args.unlock_threshold:.0%}")
     print(f"Initial pool: {pool.unlocked}")
     print(f"Ladder: {ladder}")
