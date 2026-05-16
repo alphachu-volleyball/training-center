@@ -9,7 +9,7 @@ Usage:
   uv run train-curriculum --save-dir experiments/010 --total-iterations 200
   uv run train-curriculum --save-dir experiments/010 --unlock-threshold 0.8
   uv run train-curriculum --side both \\
-      --ladder random stone builtin duckll:0 ... duckll:7 self duckll:5 ... duckll:10
+      --ladder random builtin duckll:0 ... duckll:7 self duckll:5 ... duckll:10
 """
 
 from __future__ import annotations
@@ -60,13 +60,14 @@ from training_center.scripts.utils import (
     worker_init,
 )
 
-# ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty).
-# Used as the default value for --ladder. The special spec "self" can be
-# inserted (after duckll:7 mastery, e.g.) when training a universal model
-# with --side both — see module docstring for an example.
+# ELO ladder from experiment 009 — batch Bradley-Terry (ascending difficulty),
+# with stone removed from the default gate after S009 showed it acts as a
+# brittle early P2 receive trap for universal noisy curriculum runs. Stone is
+# still available when explicitly passed via --ladder or evaluated post-hoc.
+# The special spec "self" can be inserted (after duckll:7 mastery, e.g.) when
+# training a universal model with --side both — see module docstring.
 CURRICULUM_LADDER = [
     "random",
-    "stone",
     "builtin",
     "duckll:0",
     "duckll:1",
@@ -240,7 +241,7 @@ def main() -> None:
         "for past-checkpoint self-play. Default: experiment-009 ELO ladder.",
     )
     parser.add_argument("--unlock-threshold", type=float, default=0.75, help="Min win rate to unlock next opponent")
-    parser.add_argument("--initial-unlocked", type=int, default=3, help="Number of opponents unlocked at start")
+    parser.add_argument("--initial-unlocked", type=int, default=2, help="Number of opponents unlocked at start")
     parser.add_argument(
         "--selfplay-pool-size",
         type=int,
