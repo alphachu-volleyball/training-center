@@ -165,9 +165,20 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 | Status | Meaning |
 |--------|---------|
 | **Idea** | Hypothesis / brainstorm — not yet designed |
-| **Ready** | Experiment designed, scripts/params ready (may be running) |
+| **Ready** | Experiment designed, scripts/params ready (may be running); also acceptable for recurring active tasks |
 | **Analyzed** | Results interpreted |
 | **Documented** | Compiled into a published W&B Report |
+| **Archived** | Key results are covered by a `Documented` report and hidden from the default view |
+
+### Priority
+
+`Priority` is primarily for `Idea` cards. Leave it blank for `Ready`, `Analyzed`, `Documented`, and `Archived` cards unless there is a specific reason to rank them.
+
+| Priority | Meaning |
+|----------|---------|
+| **High** | Experiments to run soon; strong candidates for the next one or two execution slots |
+| **Medium** | Experiments worth trying within the current development cycle, but not immediate |
+| **Low** | Nice-to-have ideas that may be useful or interesting, but can be skipped without blocking progress |
 
 ### Category
 
@@ -185,6 +196,14 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 - Sweeps are distinguished by their W&B sweep URL (vs run URL)
 - `pika-zoo version` field tracks which env version the experiment ran on
 - Assign experiment number (`NNN:` prefix) when moving from **Idea → Ready**
+- Do **not** use GitHub Projects' built-in archive for experiment cards. Archived project items are not reliably visible through the agent's GitHub API/CLI access.
+- Use `Status = Archived` instead when a `training`, `evaluation`, or `analysis` card has been sufficiently covered by a `Documented` report. Keep the card in the project so agents can still read it.
+- The default `Experiments` view should filter out archived cards with `-status:Archived`.
+- When a card is archived because a report covers it, append a `## Covered by` section with the report title and W&B URL.
+- When a card is archived because it is canceled, superseded, stale, or a one-off retained only for reference, append a `## Archive note` section explaining why.
+- It is okay for older one-off `Analyzed` cards to move to `Archived` even when they are not covered by a report, as long as the card body keeps the result and the archive note explains that it is no longer part of the active plan.
+- Keep recent experiment chains in `Analyzed` while they still inform the next direction, even if they are negative results.
+- When an `Idea` has effectively been tested by later experiments, move it to `Archived` with an archive note rather than leaving it as active backlog.
 
 ## Experiment Tracking
 
