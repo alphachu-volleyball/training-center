@@ -168,6 +168,7 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 | **Ready** | Experiment designed, scripts/params ready (may be running) |
 | **Analyzed** | Results interpreted |
 | **Documented** | Compiled into a published W&B Report |
+| **Archived** | Key results are covered by a `Documented` report and hidden from the default view |
 
 ### Category
 
@@ -185,6 +186,10 @@ Experiments are tracked on a GitHub Projects board: [Alphachu Pokédex](https://
 - Sweeps are distinguished by their W&B sweep URL (vs run URL)
 - `pika-zoo version` field tracks which env version the experiment ran on
 - Assign experiment number (`NNN:` prefix) when moving from **Idea → Ready**
+- Do **not** use GitHub Projects' built-in archive for experiment cards. Archived project items are not reliably visible through the agent's GitHub API/CLI access.
+- Use `Status = Archived` instead when a `training`, `evaluation`, or `analysis` card has been sufficiently covered by a `Documented` report. Keep the card in the project so agents can still read it.
+- The default `Experiments` view should filter out archived cards with `-status:Archived`.
+- When moving a card to `Archived`, add a short note in the card body if the covering report is not already obvious from the report card links or related experiment references.
 
 ## Experiment Tracking
 
