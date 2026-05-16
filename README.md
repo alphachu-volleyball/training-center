@@ -58,6 +58,9 @@ uv run train-baseline --opponent builtin --timesteps 1000000
 # Train with pika-zoo frame stacking (obs shape: 35 -> 4x35)
 uv run train-baseline --opponent builtin --frame-stack 4 --timesteps 1000000
 
+# Train a wider MLP policy (default MlpPolicy net_arch is 64 64)
+uv run train-curriculum --save-dir experiments/031 --net-arch 128 128
+
 # Curriculum training (progressive difficulty)
 uv run train-curriculum --save-dir experiments/010 --total-iterations 200
 
@@ -94,6 +97,7 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 
 - **SubprocVecEnv** — opponent is fixed, so env parallelization works directly. Each child process runs its own env + opponent independently. This is where multicore CPU gives linear speedup.
 - **Frame stacking** — `--frame-stack N` enables pika-zoo's `FrameStack` wrapper after normalization. The saved `model.json` records the stack depth so evaluation, video recording, and ONNX export use the same observation shape.
+- **Policy architecture** — `--policy` and `--policy-kwargs-json` expose SB3 policy construction generically; `--net-arch 128 128` is the common shorthand for wider MLP policy/value heads. Saved `model.json` records the resolved policy and kwargs.
 - **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
 - **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
 

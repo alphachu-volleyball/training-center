@@ -23,7 +23,13 @@ from stable_baselines3.common.callbacks import BaseCallback
 from training_center.env_factory import ensure_stack_size, make_vec_env
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.model_config import ModelConfig, save_model
+from training_center.model_config import ModelConfig, load_model_config, save_model
+from training_center.policy_config import (
+    add_policy_args,
+    ensure_policy_config_matches_init,
+    policy_request_is_explicit,
+    resolve_policy_config,
+)
 from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
@@ -280,6 +286,7 @@ def main() -> None:
     )
     parser.add_argument("--init-model", default=None, help="Pretrained model path to resume from")
     parser.add_argument("--resume-steps", action="store_true", help="Continue step count from init-model")
+    add_policy_args(parser)
     parser.add_argument("--wandb-entity", default="ootzk", help="W&B entity (user or team)")
     parser.add_argument("--wandb-project", default="alphachu-volleyball", help="W&B project name")
     parser.add_argument("--wandb-run-name", default=None, help="W&B run name (default: auto-generated)")
@@ -314,6 +321,9 @@ def main() -> None:
             "init_model": args.init_model,
             "eval_freq": args.eval_freq,
             "eval_opponents": args.eval_opponents,
+            "policy": args.policy,
+            "net_arch": args.net_arch,
+            "policy_kwargs_json": args.policy_kwargs_json,
             **meta,
         },
     )
@@ -350,11 +360,51 @@ def main() -> None:
         noise=noise,
     )
 
+    requested_policy, requested_policy_kwargs = resolve_policy_config(
+        policy=c.policy,
+        net_arch=c.net_arch,
+        policy_kwargs_json=c.policy_kwargs_json,
+    )
+    policy_explicit = policy_request_is_explicit(
+        policy=c.policy,
+        net_arch=c.net_arch,
+        policy_kwargs_json=c.policy_kwargs_json,
+    )
+    if c.init_model:
+        _, init_config = load_model_config(c.init_model)
+        if policy_explicit:
+            ensure_policy_config_matches_init(
+                init_policy=init_config.policy,
+                init_policy_kwargs=init_config.policy_kwargs,
+                requested_policy=requested_policy,
+                requested_policy_kwargs=requested_policy_kwargs,
+            )
+        training_policy = init_config.policy
+        training_policy_kwargs = init_config.policy_kwargs
+    else:
+        training_policy = requested_policy
+        training_policy_kwargs = requested_policy_kwargs
+    run.config.update(
+        {
+            "resolved_policy": training_policy,
+            "resolved_policy_kwargs": training_policy_kwargs,
+        },
+        allow_val_change=True,
+    )
+
     if c.init_model:
         model = PPO.load(c.init_model, env=env, seed=c.seed, device="cpu", verbose=1)
         print(f"Resumed from {c.init_model}")
     else:
-        model = PPO("MlpPolicy", env, verbose=1, seed=c.seed, device="cpu")
+        model = PPO(
+            training_policy,
+            env,
+            verbose=1,
+            seed=c.seed,
+            device="cpu",
+            policy_kwargs=training_policy_kwargs,
+        )
+    print(f"Policy: {training_policy}, policy_kwargs={training_policy_kwargs}")
 
     model_cfg = ModelConfig(
         side=c.side,
@@ -362,6 +412,8 @@ def main() -> None:
         observation_simplified=c.simplify_observation,
         observation_normalized=True,
         frame_stack=c.frame_stack,
+        policy=training_policy,
+        policy_kwargs=training_policy_kwargs,
     )
 
     mp_context = multiprocessing.get_context("forkserver")

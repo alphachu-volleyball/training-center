@@ -109,7 +109,7 @@ def export_onnx(model_spec: str, output_dir: str | Path, *, name: str | None = N
     print(
         f"  Config: side={config.side}, action_simplified={config.action_simplified}, "
         f"obs_simplified={config.observation_simplified}, obs_normalized={config.observation_normalized}, "
-        f"frame_stack={config.frame_stack}"
+        f"frame_stack={config.frame_stack}, policy={config.policy}, policy_kwargs={config.policy_kwargs}"
     )
 
     return output_dir
