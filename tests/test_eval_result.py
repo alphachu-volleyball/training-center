@@ -4,9 +4,11 @@ from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
     EvalSummary,
+    _parse_video_result,
     build_eval_chart_log_data,
     build_eval_chart_table,
     build_train_chart_log_data,
+    build_video_log_data,
     combine_per_side_results,
     combine_per_side_summaries,
     extend_curriculum_chart_history,
@@ -292,16 +294,15 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
 
     assert set(log_data) == {
         "eval/table",
-        "eval/dashboard",
+        "eval/dashboard/builtin",
+        "eval/dashboard/random",
     }
-    fills = [trace.get("fill") for trace in log_data["eval/dashboard"].to_plotly_json()["data"]]
+    fills = [trace.get("fill") for trace in log_data["eval/dashboard/builtin"].to_plotly_json()["data"]]
     assert "toself" in fills
     assert "tonexty" not in fills
-    dashboard = log_data["eval/dashboard"].to_plotly_json()
-    assert [button["label"] for button in dashboard["layout"]["updatemenus"][0]["buttons"]] == [
-        "builtin",
-        "random",
-    ]
+    dashboard = log_data["eval/dashboard/builtin"].to_plotly_json()
+    assert "updatemenus" not in dashboard["layout"]
+    assert dashboard["layout"]["title"]["text"] == "Eval vs builtin"
     assert [annotation["text"] for annotation in dashboard["layout"]["annotations"]] == [
         "Win rate",
         "Model score",
@@ -313,7 +314,7 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     assert dashboard["layout"]["autosize"] is True
     assert "height" not in dashboard["layout"]
     assert "0.75 threshold" not in [trace.get("name") for trace in dashboard["data"]]
-    assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
+    assert log_data["eval/dashboard/random"].to_plotly_json()["layout"]["title"]["text"] == "Eval vs random"
 
 
 def test_train_chart_log_data_compacts_selected_sb3_metrics():
@@ -371,9 +372,65 @@ def test_train_chart_log_data_can_append_curriculum_pool_size_subplot():
         "unlocked pool",
         "self-play pool",
     }.issubset({trace["name"] for trace in dashboard["data"]})
+    assert "Self-play pool size" in [annotation["text"] for annotation in dashboard["layout"]["annotations"]]
+    assert [
+        trace["showlegend"] for trace in dashboard["data"] if trace["name"] in {"unlocked pool", "self-play pool"}
+    ] == [False, False]
     assert "min win rate" not in {trace["name"] for trace in dashboard["data"]}
     assert "avg win rate" not in {trace["name"] for trace in dashboard["data"]}
     assert "unlock threshold (0.75)" not in {trace["name"] for trace in dashboard["data"]}
+
+
+def test_train_chart_hides_single_curriculum_pool_size_legend():
+    train_history = []
+    extend_train_chart_history(train_history, {"train/loss": 1.2}, step=100)
+    curriculum_history = []
+    extend_curriculum_chart_history(
+        curriculum_history,
+        {"pool_size": 3},
+        iteration=2,
+        step=200,
+    )
+
+    log_data = build_train_chart_log_data(
+        train_history,
+        curriculum_history=curriculum_history,
+    )
+    dashboard = log_data["train/dashboard"].to_plotly_json()
+
+    pool_trace = next(trace for trace in dashboard["data"] if trace["name"] == "unlocked pool")
+    assert pool_trace["showlegend"] is False
+
+
+def test_video_log_data_includes_result_summary():
+    log_data = build_video_log_data(
+        [
+            {
+                "opponent": "builtin",
+                "model_side": "p1",
+                "serve": "random",
+                "winner": "model",
+                "score": "5-4",
+                "frames": 828,
+                "video": "video-placeholder",
+            }
+        ]
+    )
+    table = log_data["video/samples"]
+
+    assert table.columns == ["opponent", "model_side", "serve", "winner", "score", "frames", "video"]
+    assert table.data[0][:6] == ["builtin", "p1", "random", "model", "5-4", 828]
+
+
+def test_parse_video_result_maps_player_winner_to_model_side():
+    output = "Game over! Player 2 wins 0-5 (879 frames)\n"
+
+    assert _parse_video_result(output, model_side="player_2") == {
+        "winner": "model",
+        "score": "0-5",
+        "frames": 879,
+    }
+    assert _parse_video_result(output, model_side="player_1")["winner"] == "opponent"
 
 
 def test_eval_dashboard_uses_dynamic_unlock_threshold():
@@ -393,7 +450,9 @@ def test_eval_dashboard_uses_dynamic_unlock_threshold():
         step=1234,
     )
 
-    dashboard = build_eval_chart_log_data({"p1": batch}, unlock_threshold=0.8)["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"p1": batch}, unlock_threshold=0.8)[
+        "eval/dashboard/builtin"
+    ].to_plotly_json()
     threshold_trace = next(trace for trace in dashboard["data"] if trace.get("name") == "unlock threshold (0.80)")
 
     assert threshold_trace["y"] == [0.8, 0.8]
@@ -446,7 +505,9 @@ def test_eval_dashboard_defaults_to_combined_when_available():
         step=100,
     )
 
-    dashboard = build_eval_chart_log_data({"combined": combined, "p1": p1, "p2": p2})["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"combined": combined, "p1": p1, "p2": p2})[
+        "eval/dashboard/builtin"
+    ].to_plotly_json()
 
     visible_by_group: dict[str, set[bool | str]] = {}
     for trace in dashboard["data"]:
@@ -538,7 +599,7 @@ def test_eval_dashboard_includes_combined_for_single_side_models():
         step=100,
     )
 
-    dashboard = build_eval_chart_log_data({"p2": batch})["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"p2": batch})["eval/dashboard/builtin"].to_plotly_json()
     visible_by_group: dict[str, set[bool | str]] = {}
     for trace in dashboard["data"]:
         group = trace.get("legendgroup")

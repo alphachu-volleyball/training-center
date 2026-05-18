@@ -47,6 +47,9 @@ uv run pytest
 
 # Lint
 uv run ruff check .
+
+# Install the local pre-push hook (format check, lint, tests)
+uv run --extra dev pre-commit install --hook-type pre-push
 ```
 
 ## Usage
@@ -60,6 +63,9 @@ uv run train-baseline --opponent builtin --frame-stack 4 --timesteps 1000000
 
 # Train a wider MLP policy (default MlpPolicy net_arch is 64 64)
 uv run train-curriculum --save-dir experiments/031 --net-arch 128 128
+
+# Train with random serve, keeping eval/video on the same serve rule by default
+uv run train-curriculum --save-dir experiments/031 --side both --serve random --net-arch 128 128
 
 # Curriculum training (progressive difficulty)
 uv run train-curriculum --save-dir experiments/010 --total-iterations 200
@@ -98,6 +104,7 @@ Trains a single agent against a fixed rule-based opponent (random, builtin, ston
 - **SubprocVecEnv** — opponent is fixed, so env parallelization works directly. Each child process runs its own env + opponent independently. This is where multicore CPU gives linear speedup.
 - **Frame stacking** — `--frame-stack N` enables pika-zoo's `FrameStack` wrapper after normalization. The saved `model.json` records the stack depth so evaluation, video recording, and ONNX export use the same observation shape.
 - **Policy architecture** — `--policy` and `--policy-kwargs-json` expose SB3 policy construction generically; `--net-arch 128 128` is the common shorthand for wider MLP policy/value heads. Saved `model.json` records the resolved policy and kwargs.
+- **Serve rules** — `--serve` controls training games. `--eval-serve` and `--video-serve` default to the same rule, but can be overridden for post-hoc comparisons. Available rules: `winner`, `loser`, `alternate`, `random`.
 - **Parallel eval callback** — evaluation matchups are submitted to a `ProcessPoolExecutor` so multiple opponents can be evaluated simultaneously. Models are passed as file paths; workers reconstruct them to avoid pickling issues.
 - **SB3 callback-driven eval** — evaluation runs inside the training loop via `EvalCallback`. Training pauses during eval, but parallel execution minimizes the pause.
 
@@ -120,6 +127,7 @@ Trains a single agent against a ladder of increasingly difficult rule-based AIs.
 
 - **CurriculumPool** — manages named AI specs (strings) and optional self-play entries. Uses the PFP weighting formula (`1.0 - win_rate + 0.1`).
 - **Unlock-gated ladder** — opponents are ordered by ELO from experiment 009, with `stone` removed from the default gate after S009 showed it can block early universal noisy runs on a narrow deterministic P2 receive test. Only unlocked when all current opponents are mastered. Prevents premature exposure to opponents the model can't learn from.
+- **Serve rules** — `--serve` controls curriculum training games. `--eval-serve` and `--video-serve` default to the same rule, preserving historical `winner` behavior unless changed explicitly.
 - **No ELO tracking** — pool composition changes on unlock, making ELO scale unstable. Use `evaluate-roundrobin` after training for absolute ELO measurement.
 - **DummyVecEnv** — opponent swapping via `set_opponent_policy()` requires same-process environment access.
 
@@ -179,19 +187,19 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 #### Evaluation Metrics
 
 Shared across all training scripts. Logged every `--eval-freq` steps/iterations. Eval logging uses one long-form
-`wandb.Table` as the source of truth plus one Plotly dashboard.
+`wandb.Table` as the source of truth plus opponent-specific Plotly dashboards.
 
 `{opp}`: any unlocked curriculum opponent such as `random`, `builtin`, `duckll:N`, explicitly configured `stone`, or `self` when curriculum self-play is enabled
 
 ##### Eval Table and Dashboard
 
-Logged by default. `eval/dashboard` is built from `eval/table` in the same log payload, not from summary scalars.
-Each eval log rewrites these objects with cumulative rows from the current run so the latest panel shows the full
-eval history.
+Logged by default. `eval/dashboard/{opp}` panels are built from `eval/table` in the same log payload, not from
+summary scalars. Each eval log rewrites these objects with cumulative rows from the current run so the latest panel
+shows the full eval history.
 
 | Key | Columns | Purpose |
 |-----|---------|---------|
-| `eval/dashboard` | Plotly figure | Dropdown-selected opponent view with win-rate, model score, opponent score, and round-frame subplots together |
+| `eval/dashboard/{opp}` | Plotly figure | Opponent-specific view with win-rate, model score, opponent score, and round-frame subplots together |
 | `eval/table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `value`, `std`, `ci95_low`, `ci95_high`, `n`, `wins`, `losses` | Single long-form source table for all dashboard curves and uncertainty bands |
 
 `eval_side` is `combined`, `p1`, or `p2`. For single-side models, `combined` is logged as the dashboard's representative
@@ -211,7 +219,7 @@ Logged every iteration (after `model.learn()`) as one compact Plotly panel.
 
 | Metric | Script | Description |
 |--------|--------|-------------|
-| `video/samples` | all training | Table of sample game recordings at end of training, grouped by opponent and model side |
+| `video/samples` | all training | Table of sample game recordings at end of training, grouped by opponent/model side with serve rule, winner, score, and frame count |
 | `matchups` (Table) | evaluate-roundrobin | Per-matchup win rates and stats |
 | `elo_ratings` (Table) | evaluate-roundrobin | Batch Bradley-Terry ELO ratings |
 | `elo/{agent}` (summary) | evaluate-roundrobin | ELO per agent in run summary |

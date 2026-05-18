@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field
+from io import StringIO
 from math import sqrt
 from numbers import Real
 from typing import Any
@@ -28,11 +31,26 @@ NOISE_LEVELS: dict[int, tuple[int, int, int]] = {
     5: (50, 20, 5),
 }
 
+SERVE_RULES = ("winner", "loser", "alternate", "random")
+
 TRAIN_DASHBOARD_METRICS: dict[str, str] = {
     "train/loss": "Loss",
     "train/entropy_loss": "Entropy loss",
     "train/explained_variance": "Explained variance",
     "train/approx_kl": "Approx KL",
+}
+
+CURRICULUM_TRAIN_DASHBOARD_METRICS: dict[str, dict[str, str]] = {
+    "pool_size": {
+        "title": "Curriculum pool size",
+        "label": "unlocked pool",
+        "color": "#4c78a8",
+    },
+    "selfplay_pool_size": {
+        "title": "Self-play pool size",
+        "label": "self-play pool",
+        "color": "#b279a2",
+    },
 }
 
 
@@ -93,11 +111,11 @@ def build_train_chart_log_data(
     curriculum_history is provided, so curriculum runs still live under the
     train section instead of creating a separate W&B section.
     """
-    include_curriculum = curriculum_history is not None
-    row_count = len(TRAIN_DASHBOARD_METRICS) + (1 if include_curriculum else 0)
+    curriculum_metrics = _curriculum_train_subplot_metrics(curriculum_history)
+    include_curriculum = bool(curriculum_metrics)
+    row_count = len(TRAIN_DASHBOARD_METRICS) + len(curriculum_metrics)
     subplot_titles = list(TRAIN_DASHBOARD_METRICS.values())
-    if include_curriculum:
-        subplot_titles.append("Curriculum pool size")
+    subplot_titles.extend(CURRICULUM_TRAIN_DASHBOARD_METRICS[metric]["title"] for metric in curriculum_metrics)
     fig = make_subplots(
         rows=row_count,
         cols=1,
@@ -126,11 +144,20 @@ def build_train_chart_log_data(
             fig,
             curriculum_history or [],
             len(TRAIN_DASHBOARD_METRICS) + 1,
+            curriculum_metrics,
         )
     fig.update_layout(title="Training diagnostics", hovermode="x unified")
     fig.update_xaxes(title_text="Step", row=row_count, col=1)
     _transparent_plotly_layout(fig)
     return {f"{prefix}/dashboard": fig}
+
+
+def _curriculum_train_subplot_metrics(history: list[dict[str, Any]] | None) -> list[str]:
+    if history is None:
+        return []
+    return [
+        metric for metric in CURRICULUM_TRAIN_DASHBOARD_METRICS if any(item["metric"] == metric for item in history)
+    ]
 
 
 def extend_curriculum_chart_history(
@@ -159,38 +186,42 @@ def _add_curriculum_train_subplots(
     fig: go.Figure,
     history: list[dict[str, Any]],
     start_row: int,
+    metrics: list[str],
 ) -> None:
     """Add curriculum pool traces to the shared train dashboard."""
-    labels = {
-        "pool_size": "unlocked pool",
-        "selfplay_pool_size": "self-play pool",
-    }
-    colors = {
-        "pool_size": "#4c78a8",
-        "selfplay_pool_size": "#b279a2",
-    }
-    for metric in ["pool_size", "selfplay_pool_size"]:
+    for offset, metric in enumerate(metrics):
         rows = [item for item in history if item["metric"] == metric]
         if rows:
+            row = start_row + offset
+            config = CURRICULUM_TRAIN_DASHBOARD_METRICS[metric]
             fig.add_trace(
                 go.Scatter(
                     x=[item["step"] for item in rows],
                     y=[item["value"] for item in rows],
                     mode="lines+markers",
-                    name=labels[metric],
-                    line={"color": colors[metric]},
+                    name=config["label"],
+                    line={"color": config["color"]},
+                    showlegend=False,
                 ),
-                row=start_row,
+                row=row,
                 col=1,
             )
-    fig.update_yaxes(title_text="Count", row=start_row, col=1)
+            fig.update_yaxes(title_text="Count", row=row, col=1)
 
 
 def build_video_log_data(samples: list[dict[str, Any]], *, prefix: str = "video") -> dict[str, Any]:
     """Build one W&B media table for sample videos."""
-    table = wandb.Table(columns=["opponent", "model_side", "video"])
+    table = wandb.Table(columns=["opponent", "model_side", "serve", "winner", "score", "frames", "video"])
     for sample in samples:
-        table.add_data(sample["opponent"], sample["model_side"], sample["video"])
+        table.add_data(
+            sample["opponent"],
+            sample["model_side"],
+            sample["serve"],
+            sample["winner"],
+            sample["score"],
+            sample["frames"],
+            sample["video"],
+        )
     return {f"{prefix}/samples": table}
 
 
@@ -767,12 +798,12 @@ def _plotly_eval_dashboard(
     rows: list[list[Any]],
     columns: list[str],
     *,
+    opponent: str,
     unlock_threshold: float | None = None,
 ) -> go.Figure:
-    """Build one dropdown-driven dashboard with core eval curves together."""
+    """Build one opponent-specific dashboard with core eval curves together."""
     data = _rows_to_dicts(rows, columns)
-    opponents = sorted({str(row["opponent"]) for row in data})
-    default_opponent = opponents[0] if opponents else ""
+    selected_opponent = opponent
     visible_sides_by_opponent = _default_visible_sides(data)
 
     fig = make_subplots(
@@ -790,9 +821,9 @@ def _plotly_eval_dashboard(
     }
     trace_specs: list[tuple[str, str | None]] = []
 
-    for opponent in opponents:
+    for opponent in [selected_opponent]:
         for side in ["combined", "p1", "p2"]:
-            visible = _eval_trace_visibility(opponent, side, default_opponent, visible_sides_by_opponent)
+            visible = _eval_trace_visibility(opponent, side, selected_opponent, visible_sides_by_opponent)
             win_side_rows = [
                 row
                 for row in data
@@ -919,33 +950,17 @@ def _plotly_eval_dashboard(
                     name=f"unlock threshold ({unlock_threshold:.2f})",
                     showlegend=True,
                     hoverinfo="skip",
-                    visible=_eval_trace_visibility(opponent, None, default_opponent, visible_sides_by_opponent),
+                    visible=_eval_trace_visibility(opponent, None, selected_opponent, visible_sides_by_opponent),
                 ),
                 row=1,
                 col=1,
             )
             trace_specs.append((opponent, None))
 
-    buttons = [
-        {
-            "label": opponent,
-            "method": "update",
-            "args": [
-                {
-                    "visible": [
-                        _eval_trace_visibility(trace_opponent, side, opponent, visible_sides_by_opponent)
-                        for trace_opponent, side in trace_specs
-                    ]
-                },
-                {"title": f"Eval vs {opponent}"},
-            ],
-        }
-        for opponent in opponents
-    ]
     fig.update_layout(
         template="plotly_white",
         autosize=True,
-        title=f"Eval vs {default_opponent}" if default_opponent else "Eval",
+        title=f"Eval vs {selected_opponent}",
         hovermode="x unified",
         paper_bgcolor="rgba(255, 255, 255, 0)",
         plot_bgcolor="rgba(255, 255, 255, 0)",
@@ -957,18 +972,7 @@ def _plotly_eval_dashboard(
             "x": 0,
             "bgcolor": "rgba(255, 255, 255, 0.75)",
         },
-        margin={"l": 60, "r": 30, "t": 130, "b": 50},
-        updatemenus=[
-            {
-                "buttons": buttons,
-                "direction": "down",
-                "showactive": True,
-                "x": 0,
-                "xanchor": "left",
-                "y": 1.3,
-                "yanchor": "top",
-            }
-        ],
+        margin={"l": 60, "r": 30, "t": 110, "b": 50},
     )
     grid_style = {"showgrid": True, "gridcolor": "rgba(31, 45, 61, 0.14)", "zerolinecolor": "rgba(31, 45, 61, 0.18)"}
     fig.update_yaxes(title_text="Win rate", range=[0, 1], row=1, col=1, **grid_style)
@@ -978,6 +982,15 @@ def _plotly_eval_dashboard(
     fig.update_xaxes(**grid_style)
     fig.update_xaxes(title_text="Step", row=4, col=1)
     return fig
+
+
+def _eval_dashboard_key(opponent: str) -> str:
+    return opponent.replace("/", "_")
+
+
+def _eval_table_opponents(rows: list[list[Any]], columns: list[str]) -> list[str]:
+    opponent_index = columns.index("opponent")
+    return sorted({str(row[opponent_index]) for row in rows})
 
 
 def build_eval_chart_log_data(
@@ -994,12 +1007,14 @@ def build_eval_chart_log_data(
     table = build_eval_chart_table(batches)
     log_data: dict[str, Any] = {
         f"{prefix}/table": table,
-        f"{prefix}/dashboard": _plotly_eval_dashboard(
+    }
+    for opponent in _eval_table_opponents(table.data, table.columns):
+        log_data[f"{prefix}/dashboard/{_eval_dashboard_key(opponent)}"] = _plotly_eval_dashboard(
             table.data,
             table.columns,
+            opponent=opponent,
             unlock_threshold=unlock_threshold,
-        ),
-    }
+        )
     return log_data
 
 
@@ -1095,7 +1110,14 @@ def model_won_per_game(result: EvalResult | EvalSummary, model_side: str) -> lis
     return [w == model_side for w in summary.game_winners]
 
 
-def record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
+def record_video(
+    model_path: str,
+    side: str,
+    opponent: str,
+    output_path: str,
+    *,
+    serve: str = "winner",
+) -> dict[str, Any]:
     """Record a sample game video using pika-zoo's play script.
 
     If ``model_path`` points to a ``.zip`` file, the parent directory is
@@ -1114,4 +1136,19 @@ def record_video(model_path: str, side: str, opponent: str, output_path: str) ->
 
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
-    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        play(p1=p1, p2=p2, winning_score=5, serve=serve, render=False, record=output_path, seed=0)
+    return _parse_video_result(stdout.getvalue(), model_side=side)
+
+
+def _parse_video_result(output: str, *, model_side: str) -> dict[str, Any]:
+    match = re.search(r"Game over! Player ([12]) wins (\d+)-(\d+) \((\d+) frames\)", output)
+    if match is None:
+        return {"winner": None, "score": None, "frames": None}
+    winner_side = "player_1" if match.group(1) == "1" else "player_2"
+    return {
+        "winner": "model" if winner_side == model_side else "opponent",
+        "score": f"{match.group(2)}-{match.group(3)}",
+        "frames": int(match.group(4)),
+    }

@@ -24,7 +24,7 @@ from training_center.elo import compute_elo
 from training_center.env_factory import ensure_stack_size
 from training_center.game import make_player, play_game
 from training_center.metadata import get_experiment_metadata
-from training_center.scripts.utils import setup_graceful_shutdown, shutdown_executor, worker_init
+from training_center.scripts.utils import SERVE_RULES, setup_graceful_shutdown, shutdown_executor, worker_init
 
 
 def _play_single_game(
@@ -32,6 +32,7 @@ def _play_single_game(
     p2_spec: str,
     simplify_observation: bool,
     winning_score: int,
+    serve: str,
     seed: int,
 ) -> tuple[str, str, dict]:
     """Worker function for parallel game execution.
@@ -41,7 +42,7 @@ def _play_single_game(
     """
     p1 = make_player(p1_spec, agent="player_1", simplify_observation=simplify_observation)
     p2 = make_player(p2_spec, agent="player_2", simplify_observation=simplify_observation)
-    episode = play_game(p1, p2, winning_score=winning_score, seed=seed)
+    episode = play_game(p1, p2, winning_score=winning_score, serve=serve, seed=seed)
     return (
         p1.name,
         p2.name,
@@ -61,6 +62,7 @@ def main() -> None:
     parser.add_argument("--p2", required=True, help="Comma-separated p2 players: random, builtin, or model path")
     parser.add_argument("--games", type=int, default=100, help="Games per pair")
     parser.add_argument("--winning-score", type=int, default=5, help="Points to win per game")
+    parser.add_argument("--serve", choices=SERVE_RULES, default="winner", help="Serve rule for games")
     parser.add_argument(
         "--simplify-observation", action="store_true", help="Models were trained with SimplifyObservation"
     )
@@ -111,6 +113,7 @@ def main() -> None:
             "p2_players": p2_specs,
             "games_per_pair": args.games,
             "winning_score": args.winning_score,
+            "serve": args.serve,
             "seed": args.seed,
             "workers": n_workers,
             **meta,
@@ -121,6 +124,7 @@ def main() -> None:
     print(f"P2 players: {list(p2_names.values())}")
     print(f"Matchups: {len(matchups)} ({n_cross} cross + {n_self} self)")
     print(f"Games per pair: {args.games}, Total: {len(tasks)}")
+    print(f"Serve: {args.serve}")
     print(f"Workers: {n_workers}")
 
     # Execute all games in parallel with progress reporting
@@ -134,7 +138,15 @@ def main() -> None:
     try:
         future_to_idx = {}
         for i, (p1s, p2s, seed) in enumerate(tasks):
-            future = executor.submit(_play_single_game, p1s, p2s, args.simplify_observation, args.winning_score, seed)
+            future = executor.submit(
+                _play_single_game,
+                p1s,
+                p2s,
+                args.simplify_observation,
+                args.winning_score,
+                args.serve,
+                seed,
+            )
             future_to_idx[future] = i
 
         done = 0

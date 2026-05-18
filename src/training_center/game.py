@@ -92,6 +92,7 @@ def play_game(
     p1: Player,
     p2: Player,
     winning_score: int = 15,
+    serve: str = "winner",
     seed: int | None = None,
     max_game_steps: int = MAX_GAME_STEPS,
     simplify_observation: bool = False,
@@ -113,7 +114,7 @@ def play_game(
 
     needs_wrappers = p1.model is not None or p2.model is not None
 
-    raw_env = PikachuVolleyballEnv(winning_score=winning_score, serve="winner", ai_policies=ai_policies or None)
+    raw_env = PikachuVolleyballEnv(winning_score=winning_score, serve=serve, ai_policies=ai_policies or None)
     env = RecordGame(raw_env, record_frames=record_frames)
 
     if needs_wrappers:
