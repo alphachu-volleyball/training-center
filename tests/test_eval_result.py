@@ -374,9 +374,7 @@ def test_train_chart_log_data_can_append_curriculum_pool_size_subplot():
     }.issubset({trace["name"] for trace in dashboard["data"]})
     assert "Self-play pool size" in [annotation["text"] for annotation in dashboard["layout"]["annotations"]]
     assert [
-        trace["showlegend"]
-        for trace in dashboard["data"]
-        if trace["name"] in {"unlocked pool", "self-play pool"}
+        trace["showlegend"] for trace in dashboard["data"] if trace["name"] in {"unlocked pool", "self-play pool"}
     ] == [False, False]
     assert "min win rate" not in {trace["name"] for trace in dashboard["data"]}
     assert "avg win rate" not in {trace["name"] for trace in dashboard["data"]}

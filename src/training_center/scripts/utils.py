@@ -156,9 +156,7 @@ def _curriculum_train_subplot_metrics(history: list[dict[str, Any]] | None) -> l
     if history is None:
         return []
     return [
-        metric
-        for metric in CURRICULUM_TRAIN_DASHBOARD_METRICS
-        if any(item["metric"] == metric for item in history)
+        metric for metric in CURRICULUM_TRAIN_DASHBOARD_METRICS if any(item["metric"] == metric for item in history)
     ]
 
 

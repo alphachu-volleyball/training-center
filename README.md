@@ -47,6 +47,9 @@ uv run pytest
 
 # Lint
 uv run ruff check .
+
+# Install the local pre-push hook (format check, lint, tests)
+uv run --extra dev pre-commit install --hook-type pre-push
 ```
 
 ## Usage
