@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -29,6 +30,8 @@ NOISE_LEVELS: dict[int, tuple[int, int, int]] = {
     4: (35, 15, 4),
     5: (50, 20, 5),
 }
+
+SERVE_RULES = ("winner", "loser", "alternate", "random")
 
 TRAIN_DASHBOARD_METRICS: dict[str, str] = {
     "train/loss": "Loss",
@@ -210,9 +213,17 @@ def _add_curriculum_train_subplots(
 
 def build_video_log_data(samples: list[dict[str, Any]], *, prefix: str = "video") -> dict[str, Any]:
     """Build one W&B media table for sample videos."""
-    table = wandb.Table(columns=["opponent", "model_side", "video"])
+    table = wandb.Table(columns=["opponent", "model_side", "serve", "winner", "score", "frames", "video"])
     for sample in samples:
-        table.add_data(sample["opponent"], sample["model_side"], sample["video"])
+        table.add_data(
+            sample["opponent"],
+            sample["model_side"],
+            sample["serve"],
+            sample["winner"],
+            sample["score"],
+            sample["frames"],
+            sample["video"],
+        )
     return {f"{prefix}/samples": table}
 
 
@@ -1101,7 +1112,14 @@ def model_won_per_game(result: EvalResult | EvalSummary, model_side: str) -> lis
     return [w == model_side for w in summary.game_winners]
 
 
-def record_video(model_path: str, side: str, opponent: str, output_path: str) -> None:
+def record_video(
+    model_path: str,
+    side: str,
+    opponent: str,
+    output_path: str,
+    *,
+    serve: str = "winner",
+) -> dict[str, Any]:
     """Record a sample game video using pika-zoo's play script.
 
     If ``model_path`` points to a ``.zip`` file, the parent directory is
@@ -1120,5 +1138,19 @@ def record_video(model_path: str, side: str, opponent: str, output_path: str) ->
 
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
-    with redirect_stdout(StringIO()):
-        play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        play(p1=p1, p2=p2, winning_score=5, serve=serve, render=False, record=output_path, seed=0)
+    return _parse_video_result(stdout.getvalue(), model_side=side)
+
+
+def _parse_video_result(output: str, *, model_side: str) -> dict[str, Any]:
+    match = re.search(r"Game over! Player ([12]) wins (\d+)-(\d+) \((\d+) frames\)", output)
+    if match is None:
+        return {"winner": None, "score": None, "frames": None}
+    winner_side = "player_1" if match.group(1) == "1" else "player_2"
+    return {
+        "winner": "model" if winner_side == model_side else "opponent",
+        "score": f"{match.group(2)}-{match.group(3)}",
+        "frames": int(match.group(4)),
+    }

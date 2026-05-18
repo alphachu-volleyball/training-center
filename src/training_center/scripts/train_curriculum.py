@@ -44,6 +44,7 @@ from training_center.policy_config import (
 from training_center.pool import CurriculumPool, make_opponent_policy
 from training_center.pool.curriculum import SELF_ENTRY
 from training_center.scripts.utils import (
+    SERVE_RULES,
     EvalBatch,
     EvalResult,
     build_eval_chart_log_data,
@@ -150,6 +151,7 @@ def _eval_matchup_worker(
     opp_name: str,
     games: int,
     winning_score: int,
+    serve: str,
     simplify_observation: bool,
     seed: int,
 ) -> tuple[str, EvalResult]:
@@ -170,6 +172,7 @@ def _eval_matchup_worker(
                 model_player,
                 opp_player,
                 winning_score=winning_score,
+                serve=serve,
                 seed=game_seed,
                 record_frames=True,
                 simplify_observation=simplify_observation,
@@ -179,6 +182,7 @@ def _eval_matchup_worker(
                 opp_player,
                 model_player,
                 winning_score=winning_score,
+                serve=serve,
                 seed=game_seed,
                 record_frames=True,
                 simplify_observation=simplify_observation,
@@ -228,6 +232,19 @@ def main() -> None:
     parser.add_argument("--noise-x", type=int, default=None, help="Ball x position noise ±N pixels")
     parser.add_argument("--noise-x-vel", type=int, default=None, help="Ball x velocity noise ±N")
     parser.add_argument("--noise-y-vel", type=int, default=None, help="Ball y velocity noise ±N")
+    parser.add_argument("--serve", choices=SERVE_RULES, default="winner", help="Serve rule for training games")
+    parser.add_argument(
+        "--eval-serve",
+        choices=SERVE_RULES,
+        default=None,
+        help="Serve rule for eval games (default: same as --serve)",
+    )
+    parser.add_argument(
+        "--video-serve",
+        choices=SERVE_RULES,
+        default=None,
+        help="Serve rule for sample videos (default: same as --eval-serve)",
+    )
     parser.add_argument("--simplify-observation", action="store_true", help="Mirror player_2 x-axis observations")
     parser.add_argument(
         "--frame-stack", type=int, default=1, help="Number of recent observations to stack (1=disabled)"
@@ -270,6 +287,10 @@ def main() -> None:
     if args.side == "both" and not args.simplify_observation:
         print("Note: --side both auto-enables --simplify-observation")
         args.simplify_observation = True
+    if args.eval_serve is None:
+        args.eval_serve = args.serve
+    if args.video_serve is None:
+        args.video_serve = args.eval_serve
 
     save_dir = Path(args.save_dir)
     meta = get_experiment_metadata()
@@ -321,6 +342,9 @@ def main() -> None:
             "side": args.side,
             "seed": args.seed,
             "noise_level": args.noise_level,
+            "serve": args.serve,
+            "eval_serve": args.eval_serve,
+            "video_serve": args.video_serve,
             "simplify_observation": args.simplify_observation,
             "frame_stack": args.frame_stack,
             "unlock_threshold": args.unlock_threshold,
@@ -343,6 +367,7 @@ def main() -> None:
         seed=args.seed,
         simplify_observation=args.simplify_observation,
         frame_stack=args.frame_stack,
+        serve=args.serve,
         noise=noise,
     )
 
@@ -366,6 +391,7 @@ def main() -> None:
 
     print(f"Curriculum training: {args.total_iterations} iterations x {args.steps_per_iter} steps")
     print(f"Envs: {args.num_envs} (DummyVecEnv), side={args.side}")
+    print(f"Serve: train={args.serve}, eval={args.eval_serve}, video={args.video_serve}")
     print(f"Policy: {training_policy}, policy_kwargs={training_policy_kwargs}")
     print(f"Unlock threshold: {args.unlock_threshold:.0%}")
     print(f"Initial pool: {pool.unlocked}")
@@ -445,6 +471,7 @@ def main() -> None:
                             opp,
                             per_side_eval_games,
                             args.eval_score,
+                            args.eval_serve,
                             args.simplify_observation,
                             seed,
                         )
@@ -548,11 +575,13 @@ def main() -> None:
                 tag = "p1" if video_side == "player_1" else "p2"
                 suffix = f"_as_{tag}" if args.side == "both" else ""
                 video_path = str(save_dir / f"vs_{opp}{suffix}.mp4")
-                record_video(final_zip, video_side, opp, video_path)
+                video_result = record_video(final_zip, video_side, opp, video_path, serve=args.video_serve)
                 video_samples.append(
                     {
                         "opponent": opp,
                         "model_side": tag,
+                        "serve": args.video_serve,
+                        **video_result,
                         "video": wandb.Video(video_path, format="mp4"),
                     }
                 )

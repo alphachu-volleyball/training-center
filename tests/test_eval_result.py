@@ -4,9 +4,11 @@ from training_center.scripts.utils import (
     EvalBatch,
     EvalResult,
     EvalSummary,
+    _parse_video_result,
     build_eval_chart_log_data,
     build_eval_chart_table,
     build_train_chart_log_data,
+    build_video_log_data,
     combine_per_side_results,
     combine_per_side_summaries,
     extend_curriculum_chart_history,
@@ -400,6 +402,37 @@ def test_train_chart_hides_single_curriculum_pool_size_legend():
 
     pool_trace = next(trace for trace in dashboard["data"] if trace["name"] == "unlocked pool")
     assert pool_trace["showlegend"] is False
+
+
+def test_video_log_data_includes_result_summary():
+    log_data = build_video_log_data(
+        [
+            {
+                "opponent": "builtin",
+                "model_side": "p1",
+                "serve": "random",
+                "winner": "model",
+                "score": "5-4",
+                "frames": 828,
+                "video": "video-placeholder",
+            }
+        ]
+    )
+    table = log_data["video/samples"]
+
+    assert table.columns == ["opponent", "model_side", "serve", "winner", "score", "frames", "video"]
+    assert table.data[0][:6] == ["builtin", "p1", "random", "model", "5-4", 828]
+
+
+def test_parse_video_result_maps_player_winner_to_model_side():
+    output = "Game over! Player 2 wins 0-5 (879 frames)\n"
+
+    assert _parse_video_result(output, model_side="player_2") == {
+        "winner": "model",
+        "score": "0-5",
+        "frames": 879,
+    }
+    assert _parse_video_result(output, model_side="player_1")["winner"] == "opponent"
 
 
 def test_eval_dashboard_uses_dynamic_unlock_threshold():

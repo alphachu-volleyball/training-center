@@ -1174,8 +1174,8 @@ wheels = [
 
 [[package]]
 name = "pika-zoo"
-version = "1.6.0"
-source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.0#a786ac4b46be2d24abdaa579cd05741363cee1ac" }
+version = "1.6.1"
+source = { git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.1#ced32730f8c437eebc042eb4bc1b1debd4eb157c" }
 dependencies = [
     { name = "gymnasium" },
     { name = "numpy" },
@@ -1755,8 +1755,8 @@ dev = [
 requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.30.0" },
     { name = "onnx", specifier = ">=1.14.0" },
-    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.0" },
-    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.0" },
+    { name = "pika-zoo", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.1" },
+    { name = "pika-zoo", extras = ["rendering"], marker = "extra == 'rendering'", git = "https://github.com/alphachu-volleyball/pika-zoo?rev=v1.6.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
