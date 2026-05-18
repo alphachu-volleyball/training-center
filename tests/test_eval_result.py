@@ -371,9 +371,36 @@ def test_train_chart_log_data_can_append_curriculum_pool_size_subplot():
         "unlocked pool",
         "self-play pool",
     }.issubset({trace["name"] for trace in dashboard["data"]})
+    assert "Self-play pool size" in [annotation["text"] for annotation in dashboard["layout"]["annotations"]]
+    assert [
+        trace["showlegend"]
+        for trace in dashboard["data"]
+        if trace["name"] in {"unlocked pool", "self-play pool"}
+    ] == [False, False]
     assert "min win rate" not in {trace["name"] for trace in dashboard["data"]}
     assert "avg win rate" not in {trace["name"] for trace in dashboard["data"]}
     assert "unlock threshold (0.75)" not in {trace["name"] for trace in dashboard["data"]}
+
+
+def test_train_chart_hides_single_curriculum_pool_size_legend():
+    train_history = []
+    extend_train_chart_history(train_history, {"train/loss": 1.2}, step=100)
+    curriculum_history = []
+    extend_curriculum_chart_history(
+        curriculum_history,
+        {"pool_size": 3},
+        iteration=2,
+        step=200,
+    )
+
+    log_data = build_train_chart_log_data(
+        train_history,
+        curriculum_history=curriculum_history,
+    )
+    dashboard = log_data["train/dashboard"].to_plotly_json()
+
+    pool_trace = next(trace for trace in dashboard["data"] if trace["name"] == "unlocked pool")
+    assert pool_trace["showlegend"] is False
 
 
 def test_eval_dashboard_uses_dynamic_unlock_threshold():

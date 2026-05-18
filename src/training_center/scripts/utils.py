@@ -35,6 +35,19 @@ TRAIN_DASHBOARD_METRICS: dict[str, str] = {
     "train/approx_kl": "Approx KL",
 }
 
+CURRICULUM_TRAIN_DASHBOARD_METRICS: dict[str, dict[str, str]] = {
+    "pool_size": {
+        "title": "Curriculum pool size",
+        "label": "unlocked pool",
+        "color": "#4c78a8",
+    },
+    "selfplay_pool_size": {
+        "title": "Self-play pool size",
+        "label": "self-play pool",
+        "color": "#b279a2",
+    },
+}
+
 
 def parse_noise(
     noise_level: int | None,
@@ -93,11 +106,11 @@ def build_train_chart_log_data(
     curriculum_history is provided, so curriculum runs still live under the
     train section instead of creating a separate W&B section.
     """
-    include_curriculum = curriculum_history is not None
-    row_count = len(TRAIN_DASHBOARD_METRICS) + (1 if include_curriculum else 0)
+    curriculum_metrics = _curriculum_train_subplot_metrics(curriculum_history)
+    include_curriculum = bool(curriculum_metrics)
+    row_count = len(TRAIN_DASHBOARD_METRICS) + len(curriculum_metrics)
     subplot_titles = list(TRAIN_DASHBOARD_METRICS.values())
-    if include_curriculum:
-        subplot_titles.append("Curriculum pool size")
+    subplot_titles.extend(CURRICULUM_TRAIN_DASHBOARD_METRICS[metric]["title"] for metric in curriculum_metrics)
     fig = make_subplots(
         rows=row_count,
         cols=1,
@@ -126,11 +139,22 @@ def build_train_chart_log_data(
             fig,
             curriculum_history or [],
             len(TRAIN_DASHBOARD_METRICS) + 1,
+            curriculum_metrics,
         )
     fig.update_layout(title="Training diagnostics", hovermode="x unified")
     fig.update_xaxes(title_text="Step", row=row_count, col=1)
     _transparent_plotly_layout(fig)
     return {f"{prefix}/dashboard": fig}
+
+
+def _curriculum_train_subplot_metrics(history: list[dict[str, Any]] | None) -> list[str]:
+    if history is None:
+        return []
+    return [
+        metric
+        for metric in CURRICULUM_TRAIN_DASHBOARD_METRICS
+        if any(item["metric"] == metric for item in history)
+    ]
 
 
 def extend_curriculum_chart_history(
@@ -159,31 +183,27 @@ def _add_curriculum_train_subplots(
     fig: go.Figure,
     history: list[dict[str, Any]],
     start_row: int,
+    metrics: list[str],
 ) -> None:
     """Add curriculum pool traces to the shared train dashboard."""
-    labels = {
-        "pool_size": "unlocked pool",
-        "selfplay_pool_size": "self-play pool",
-    }
-    colors = {
-        "pool_size": "#4c78a8",
-        "selfplay_pool_size": "#b279a2",
-    }
-    for metric in ["pool_size", "selfplay_pool_size"]:
+    for offset, metric in enumerate(metrics):
         rows = [item for item in history if item["metric"] == metric]
         if rows:
+            row = start_row + offset
+            config = CURRICULUM_TRAIN_DASHBOARD_METRICS[metric]
             fig.add_trace(
                 go.Scatter(
                     x=[item["step"] for item in rows],
                     y=[item["value"] for item in rows],
                     mode="lines+markers",
-                    name=labels[metric],
-                    line={"color": colors[metric]},
+                    name=config["label"],
+                    line={"color": config["color"]},
+                    showlegend=False,
                 ),
-                row=start_row,
+                row=row,
                 col=1,
             )
-    fig.update_yaxes(title_text="Count", row=start_row, col=1)
+            fig.update_yaxes(title_text="Count", row=row, col=1)
 
 
 def build_video_log_data(samples: list[dict[str, Any]], *, prefix: str = "video") -> dict[str, Any]:
