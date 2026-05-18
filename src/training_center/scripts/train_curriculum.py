@@ -540,10 +540,10 @@ def main() -> None:
         # opponent spec, not meaningful as a final demo). For universal models,
         # record one video per side.
         video_sides = ["player_1", "player_2"] if args.side == "both" else [args.side]
+        video_opponents = [opp for opp in pool.unlocked if opp != SELF_ENTRY]
         video_samples = []
-        for opp in pool.unlocked:
-            if opp == SELF_ENTRY:
-                continue
+        print(f"Recording sample videos ({len(video_opponents) * len(video_sides)} games)...", flush=True)
+        for opp in video_opponents:
             for video_side in video_sides:
                 tag = "p1" if video_side == "player_1" else "p2"
                 suffix = f"_as_{tag}" if args.side == "both" else ""
@@ -553,10 +553,11 @@ def main() -> None:
                     {
                         "opponent": opp,
                         "model_side": tag,
-                        "video": wandb.Video(video_path, fps=25, format="mp4"),
+                        "video": wandb.Video(video_path, format="mp4"),
                     }
                 )
         if video_samples:
+            print(f"Sample videos recorded ({len(video_samples)} games).", flush=True)
             run.log(build_video_log_data(video_samples))
 
         print(f"\nTraining complete. Final pool: {pool.unlocked}")

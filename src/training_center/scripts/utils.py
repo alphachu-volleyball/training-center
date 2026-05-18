@@ -6,7 +6,9 @@ import os
 import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field
+from io import StringIO
 from math import sqrt
 from numbers import Real
 from typing import Any
@@ -1118,4 +1120,5 @@ def record_video(model_path: str, side: str, opponent: str, output_path: str) ->
 
     p1 = model_path if side == "player_1" else opponent
     p2 = opponent if side == "player_1" else model_path
-    play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)
+    with redirect_stdout(StringIO()):
+        play(p1=p1, p2=p2, winning_score=5, render=False, record=output_path, seed=0)

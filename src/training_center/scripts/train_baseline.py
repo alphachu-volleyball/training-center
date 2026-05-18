@@ -460,6 +460,7 @@ def main() -> None:
         video_sides = ["player_1", "player_2"] if c.side == "both" else [c.side]
         eval_opps = [s.strip() for s in c.eval_opponents.split(",")]
         video_samples = []
+        print(f"Recording sample videos ({len(eval_opps) * len(video_sides)} games)...", flush=True)
         for opp in eval_opps:
             for video_side in video_sides:
                 tag = "p1" if video_side == "player_1" else "p2"
@@ -470,10 +471,11 @@ def main() -> None:
                     {
                         "opponent": opp,
                         "model_side": tag,
-                        "video": wandb.Video(video_path, fps=25, format="mp4"),
+                        "video": wandb.Video(video_path, format="mp4"),
                     }
                 )
         if video_samples:
+            print(f"Sample videos recorded ({len(video_samples)} games).", flush=True)
             run.log(build_video_log_data(video_samples))
     finally:
         if eval_executor is not None:
