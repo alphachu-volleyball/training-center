@@ -292,16 +292,15 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
 
     assert set(log_data) == {
         "eval/table",
-        "eval/dashboard",
+        "eval/dashboard/builtin",
+        "eval/dashboard/random",
     }
-    fills = [trace.get("fill") for trace in log_data["eval/dashboard"].to_plotly_json()["data"]]
+    fills = [trace.get("fill") for trace in log_data["eval/dashboard/builtin"].to_plotly_json()["data"]]
     assert "toself" in fills
     assert "tonexty" not in fills
-    dashboard = log_data["eval/dashboard"].to_plotly_json()
-    assert [button["label"] for button in dashboard["layout"]["updatemenus"][0]["buttons"]] == [
-        "builtin",
-        "random",
-    ]
+    dashboard = log_data["eval/dashboard/builtin"].to_plotly_json()
+    assert "updatemenus" not in dashboard["layout"]
+    assert dashboard["layout"]["title"]["text"] == "Eval vs builtin"
     assert [annotation["text"] for annotation in dashboard["layout"]["annotations"]] == [
         "Win rate",
         "Model score",
@@ -313,7 +312,7 @@ def test_eval_chart_log_data_includes_immediate_plotly_panels():
     assert dashboard["layout"]["autosize"] is True
     assert "height" not in dashboard["layout"]
     assert "0.75 threshold" not in [trace.get("name") for trace in dashboard["data"]]
-    assert len(dashboard["layout"]["updatemenus"][0]["buttons"][0]["args"][0]["visible"]) == len(dashboard["data"])
+    assert log_data["eval/dashboard/random"].to_plotly_json()["layout"]["title"]["text"] == "Eval vs random"
 
 
 def test_train_chart_log_data_compacts_selected_sb3_metrics():
@@ -420,7 +419,9 @@ def test_eval_dashboard_uses_dynamic_unlock_threshold():
         step=1234,
     )
 
-    dashboard = build_eval_chart_log_data({"p1": batch}, unlock_threshold=0.8)["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"p1": batch}, unlock_threshold=0.8)[
+        "eval/dashboard/builtin"
+    ].to_plotly_json()
     threshold_trace = next(trace for trace in dashboard["data"] if trace.get("name") == "unlock threshold (0.80)")
 
     assert threshold_trace["y"] == [0.8, 0.8]
@@ -473,7 +474,9 @@ def test_eval_dashboard_defaults_to_combined_when_available():
         step=100,
     )
 
-    dashboard = build_eval_chart_log_data({"combined": combined, "p1": p1, "p2": p2})["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"combined": combined, "p1": p1, "p2": p2})[
+        "eval/dashboard/builtin"
+    ].to_plotly_json()
 
     visible_by_group: dict[str, set[bool | str]] = {}
     for trace in dashboard["data"]:
@@ -565,7 +568,7 @@ def test_eval_dashboard_includes_combined_for_single_side_models():
         step=100,
     )
 
-    dashboard = build_eval_chart_log_data({"p2": batch})["eval/dashboard"].to_plotly_json()
+    dashboard = build_eval_chart_log_data({"p2": batch})["eval/dashboard/builtin"].to_plotly_json()
     visible_by_group: dict[str, set[bool | str]] = {}
     for trace in dashboard["data"]:
         group = trace.get("legendgroup")

@@ -179,19 +179,19 @@ uv run train-baseline --wandb-run-name 001-baseline-p1-builtin ...
 #### Evaluation Metrics
 
 Shared across all training scripts. Logged every `--eval-freq` steps/iterations. Eval logging uses one long-form
-`wandb.Table` as the source of truth plus one Plotly dashboard.
+`wandb.Table` as the source of truth plus opponent-specific Plotly dashboards.
 
 `{opp}`: any unlocked curriculum opponent such as `random`, `builtin`, `duckll:N`, explicitly configured `stone`, or `self` when curriculum self-play is enabled
 
 ##### Eval Table and Dashboard
 
-Logged by default. `eval/dashboard` is built from `eval/table` in the same log payload, not from summary scalars.
-Each eval log rewrites these objects with cumulative rows from the current run so the latest panel shows the full
-eval history.
+Logged by default. `eval/dashboard/{opp}` panels are built from `eval/table` in the same log payload, not from
+summary scalars. Each eval log rewrites these objects with cumulative rows from the current run so the latest panel
+shows the full eval history.
 
 | Key | Columns | Purpose |
 |-----|---------|---------|
-| `eval/dashboard` | Plotly figure | Dropdown-selected opponent view with win-rate, model score, opponent score, and round-frame subplots together |
+| `eval/dashboard/{opp}` | Plotly figure | Opponent-specific view with win-rate, model score, opponent score, and round-frame subplots together |
 | `eval/table` | `step`, `iteration`, `opponent`, `eval_side`, `metric`, `value`, `std`, `ci95_low`, `ci95_high`, `n`, `wins`, `losses` | Single long-form source table for all dashboard curves and uncertainty bands |
 
 `eval_side` is `combined`, `p1`, or `p2`. For single-side models, `combined` is logged as the dashboard's representative

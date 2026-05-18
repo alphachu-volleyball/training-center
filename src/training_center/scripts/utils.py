@@ -787,12 +787,12 @@ def _plotly_eval_dashboard(
     rows: list[list[Any]],
     columns: list[str],
     *,
+    opponent: str,
     unlock_threshold: float | None = None,
 ) -> go.Figure:
-    """Build one dropdown-driven dashboard with core eval curves together."""
+    """Build one opponent-specific dashboard with core eval curves together."""
     data = _rows_to_dicts(rows, columns)
-    opponents = sorted({str(row["opponent"]) for row in data})
-    default_opponent = opponents[0] if opponents else ""
+    selected_opponent = opponent
     visible_sides_by_opponent = _default_visible_sides(data)
 
     fig = make_subplots(
@@ -810,9 +810,9 @@ def _plotly_eval_dashboard(
     }
     trace_specs: list[tuple[str, str | None]] = []
 
-    for opponent in opponents:
+    for opponent in [selected_opponent]:
         for side in ["combined", "p1", "p2"]:
-            visible = _eval_trace_visibility(opponent, side, default_opponent, visible_sides_by_opponent)
+            visible = _eval_trace_visibility(opponent, side, selected_opponent, visible_sides_by_opponent)
             win_side_rows = [
                 row
                 for row in data
@@ -939,33 +939,17 @@ def _plotly_eval_dashboard(
                     name=f"unlock threshold ({unlock_threshold:.2f})",
                     showlegend=True,
                     hoverinfo="skip",
-                    visible=_eval_trace_visibility(opponent, None, default_opponent, visible_sides_by_opponent),
+                    visible=_eval_trace_visibility(opponent, None, selected_opponent, visible_sides_by_opponent),
                 ),
                 row=1,
                 col=1,
             )
             trace_specs.append((opponent, None))
 
-    buttons = [
-        {
-            "label": opponent,
-            "method": "update",
-            "args": [
-                {
-                    "visible": [
-                        _eval_trace_visibility(trace_opponent, side, opponent, visible_sides_by_opponent)
-                        for trace_opponent, side in trace_specs
-                    ]
-                },
-                {"title": f"Eval vs {opponent}"},
-            ],
-        }
-        for opponent in opponents
-    ]
     fig.update_layout(
         template="plotly_white",
         autosize=True,
-        title=f"Eval vs {default_opponent}" if default_opponent else "Eval",
+        title=f"Eval vs {selected_opponent}",
         hovermode="x unified",
         paper_bgcolor="rgba(255, 255, 255, 0)",
         plot_bgcolor="rgba(255, 255, 255, 0)",
@@ -977,18 +961,7 @@ def _plotly_eval_dashboard(
             "x": 0,
             "bgcolor": "rgba(255, 255, 255, 0.75)",
         },
-        margin={"l": 60, "r": 30, "t": 130, "b": 50},
-        updatemenus=[
-            {
-                "buttons": buttons,
-                "direction": "down",
-                "showactive": True,
-                "x": 0,
-                "xanchor": "left",
-                "y": 1.3,
-                "yanchor": "top",
-            }
-        ],
+        margin={"l": 60, "r": 30, "t": 110, "b": 50},
     )
     grid_style = {"showgrid": True, "gridcolor": "rgba(31, 45, 61, 0.14)", "zerolinecolor": "rgba(31, 45, 61, 0.18)"}
     fig.update_yaxes(title_text="Win rate", range=[0, 1], row=1, col=1, **grid_style)
@@ -998,6 +971,15 @@ def _plotly_eval_dashboard(
     fig.update_xaxes(**grid_style)
     fig.update_xaxes(title_text="Step", row=4, col=1)
     return fig
+
+
+def _eval_dashboard_key(opponent: str) -> str:
+    return opponent.replace("/", "_")
+
+
+def _eval_table_opponents(rows: list[list[Any]], columns: list[str]) -> list[str]:
+    opponent_index = columns.index("opponent")
+    return sorted({str(row[opponent_index]) for row in rows})
 
 
 def build_eval_chart_log_data(
@@ -1014,12 +996,14 @@ def build_eval_chart_log_data(
     table = build_eval_chart_table(batches)
     log_data: dict[str, Any] = {
         f"{prefix}/table": table,
-        f"{prefix}/dashboard": _plotly_eval_dashboard(
+    }
+    for opponent in _eval_table_opponents(table.data, table.columns):
+        log_data[f"{prefix}/dashboard/{_eval_dashboard_key(opponent)}"] = _plotly_eval_dashboard(
             table.data,
             table.columns,
+            opponent=opponent,
             unlock_threshold=unlock_threshold,
-        ),
-    }
+        )
     return log_data
 
 
